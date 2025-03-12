@@ -34,10 +34,10 @@ Run the Server:
 
 This llmserver now only support these modules
 
-| Model name | Size | Mem useage (Estimated) |
-| --- | --- |
-| [kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4) | 2.04GB | 2.07 GB |
 
+| Model name | Size | Mem useage (Estimated) |
+| --- | --- | --- |
+| [kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4) | 2.04GB | 2.07 GB |
 
 ## Usage
 
