@@ -2003,9 +2003,9 @@ dependencies = [
 
 [[package]]
 name = "rkllm-rs"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78b7b4bd800e7e4ba5f0675a3f8cc70e7bc45a9cf9ec39c9ef85a8a5d81f1052"
+checksum = "882a7933e2c00448c8acef05eb5192b66cb7620ba8fc672ef4de12ffae4bb9f7"
 dependencies = [
  "bindgen",
  "futures",

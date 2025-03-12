@@ -18,19 +18,30 @@ To install and run `llmserver-rs`, follow these steps:
 
 1. **Clone the Repository**:
 ```bash
-   git clone https://github.com/darkautism/llmserver-rs
+git clone https://github.com/darkautism/llmserver-rs
 ```
 Build the Project:
 ```bash
-    cd llmserver-rs
-    cargo build --release
+cd llmserver-rs
+cargo build --release
 ```
 Run the Server:
 ```bash
-./target/release/llmserver
+./target/release/llmserver kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4
 ```
 
+## Support module
+
+This llmserver now only support these modules
+
+| Model name | Size | Mem useage (Estimated) |
+| --- | --- |
+| [kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4) | 2.04GB | 2.07 GB |
+
+
 ## Usage
+
+You can access the online documentation at http://localhost:8080/swagger-ui/, which includes request examples and curl demo code.
 
 The API server provides the following endpoints:
 
