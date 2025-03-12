@@ -56,7 +56,7 @@ deployment.apps/llmserver created
 service/llmserver-service created
 ```
 
-**Note**: My yaml use rock-ceph as backend pvc provider. You can change it you liked. Or you can fellow [this guide](https://microk8s.io/docs/how-to-ceph) to build your own cluster storage system
+**Note**: My yaml use rock-ceph as backend pvc provider. You can change it you liked. Or you can follow [this guide](https://microk8s.io/docs/how-to-ceph) to build your own cluster storage system
 **Note**: [error maybe happened](https://github.com/canonical/microk8s/issues/4314#issuecomment-1873823537)
 
 Now you can see pod in your default namespace(if you do not like default namespace, change it by yourself).
