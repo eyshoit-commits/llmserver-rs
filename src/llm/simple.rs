@@ -1,9 +1,10 @@
-use std::pin::Pin;
 use actix::Actor;
 use hf_hub::api::sync::Api;
 use rkllm_rs::prelude::*;
 use serde::Deserialize;
 use serde_variant::to_variant_name;
+use std::ffi::CString;
+use std::pin::Pin;
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::AIModel;
@@ -90,9 +91,7 @@ impl actix::Handler<ShutdownMessages> for SimpleRkLLM {
 
 impl AIModel for SimpleRkLLM {
     type Config = SimpleLLMConfig;
-    fn init(
-        config: &SimpleLLMConfig,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    fn init(config: &SimpleLLMConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut param = RKLLMParam {
             ..Default::default()
         };
@@ -100,7 +99,9 @@ impl AIModel for SimpleRkLLM {
         let repo = api.model(config.modle_path.clone());
         let binding = repo.get("model.rkllm")?;
         let modle_path = binding.to_string_lossy();
-        param.model_path = modle_path.as_ptr();
+        let c_str = CString::new(modle_path.as_ref()).unwrap();
+        param.model_path = c_str.as_ptr();
+
         let handle = rkllm_init(&mut param)?;
         let atoken = AutoTokenizer::from_pretrained(config.modle_path.clone(), None)?;
 
