@@ -1,6 +1,6 @@
 # llmserver-rs
 
-A Rust-based, OpenAI-style API server for large language models (LLMs) that can run on the Orange Pi 5.
+A Rust-based, OpenAI-style API server for large language models (LLMs) that can run on the Rknpu
 
 ## Description
 
@@ -10,7 +10,7 @@ This project provides a Rust implementation of an API server that mimics the fun
 
 - **OpenAI-style API**: Compatible with OpenAI's API endpoints for easy integration.
 - **Rust Language**: Utilizes Rust for its performance, safety, and concurrency features.
-- **Hardware Compatibility**: Specifically designed to run on the Orange Pi 5, powered by the rk3588 chip.
+- **Hardware Compatibility**: Specifically designed to run on the rknpu, powered by the rk3588 chip.
 
 ## Installation
 
@@ -79,10 +79,18 @@ http://*<*your node ip not cluster ip*>*:31106/swagger-ui/
 
 This llmserver now only support these modules
 
+### Text generation model
+
 | Model Name | Size | Mem useage (Estimated) | Microk8s config | Notes |
 | --- | --- | --- | --- | --- |
 | [kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4) | 2.04GB | 2.07 GB | [link](k8s/deepseek-1.5b.yaml) | |
 | [kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4) | 8.19GB | 9+ GB | [link](k8s/deepseek-7b.yaml) | Only work on Opi 5 16 GB model|
+
+### Speech to text model
+| Model Name | Size | Mem useage (Estimated) | Microk8s config | Notes |
+| --- | --- | --- | --- | --- |
+
+
 
 
 ## Usage
@@ -91,7 +99,6 @@ You can access the online documentation at http://localhost:8080/swagger-ui/, wh
 
 The API server provides the following endpoints:
 
-- /v1/completions: Generate text completions based on a given prompt.
 - /v1/chat/completions: Generate chat completions for conversational AI.
 
 
@@ -101,5 +108,3 @@ This project is licensed under the MIT License.
 ## Acknowledgements
 
 [OpenAI](https://platform.openai.com/docs/api-reference) for their pioneering work in LLM APIs.
-
-[Orange Pi 5](http://www.orangepi.org/) for providing the hardware platform.
