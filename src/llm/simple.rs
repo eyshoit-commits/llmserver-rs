@@ -18,6 +18,7 @@ use autotokenizer::DefaultPromptMessage;
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SimpleLLMConfig {
     pub modle_path: String,
+    pub modle_name: String,
     pub cache_path: Option<String>,
     pub think: bool,
 }

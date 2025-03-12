@@ -1,4 +1,5 @@
 {
     "modle_path": "kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4",
+    "modle_name": "DeepSeek-R1-Distill-Qwen-1.5B",
     "think" : false 
 }

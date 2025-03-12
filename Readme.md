@@ -82,7 +82,7 @@ This llmserver now only support these modules
 | Model Name | Size | Mem useage (Estimated) | Microk8s config | Notes |
 | --- | --- | --- | --- | --- |
 | [kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4) | 2.04GB | 2.07 GB | [link](k8s/simple.yaml) | |
-| [kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4) | 8.19GB | 2.07 GB | [link](k8s/simple.yaml) | Only work on Opi 5 16 GB model|
+| [kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4) | 8.19GB | 9+ GB | [link](k8s/simple.yaml) | Only work on Opi 5 16 GB model|
 
 
 ## Usage

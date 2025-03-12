@@ -1,7 +1,7 @@
-use actix::Actor;
+use actix::{Actor, Recipient};
 use clap::{Arg, ArgAction, Command};
 use serde::Deserialize;
-use std::{fs::File, io::BufReader, net::Ipv4Addr};
+use std::{collections::HashMap, fs::File, io::BufReader, net::Ipv4Addr};
 
 use actix_web::{head, middleware::Logger, App, HttpServer, Result};
 use llmserver_rs::llm::{simple::SimpleLLMConfig, AIModel, ProcessMessages, ShutdownMessages};
@@ -41,28 +41,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //初始化模型
     let mut num_instances = 1; // 根據資源設定
-    
+
     if let Some(value) = matches.get_one::<usize>("instances") {
         num_instances = *value;
     }
     let model_name = matches.get_one::<String>("model_name").unwrap();
 
     // 跑起LLM
-    let mut process_recipients = Vec::new();
+    let mut process_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
     let mut shutdown_recipients = Vec::new();
     for _ in 0..num_instances {
-        let llm = match (*model_name).as_str() {
+        let (llm, modelname) = match (*model_name).as_str() {
             "kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4" => {
-                let file = File::open("assets/config/simplerkllm.json").expect("Config simplerkllm.json not found!");
+                let file = File::open("assets/config/deepseek-1.5b.json")
+                    .expect("Config simplerkllm.json not found!");
                 let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
                 let config = SimpleLLMConfig::deserialize(&mut de)?;
-                llmserver_rs::llm::simple::SimpleRkLLM::init(&config)
+                (
+                    llmserver_rs::llm::simple::SimpleRkLLM::init(&config),
+                    config.modle_name.clone(),
+                )
             }
-            _ => Err(format!("Unknown model: {}", model_name).into()),
+            "kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4" => {
+                let file = File::open("assets/config/deepseek-1.5b.json")
+                    .expect("Config simplerkllm.json not found!");
+                let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
+                let config = SimpleLLMConfig::deserialize(&mut de)?;
+                (
+                    llmserver_rs::llm::simple::SimpleRkLLM::init(&config),
+                    config.modle_name.clone(),
+                )
+            }
+            _ => panic!("Unknown model: {}", model_name),
+        };
+        let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
+        if let Some(vec) = process_recipients.get_mut(&modelname) {
+            vec.push(addr.clone().recipient::<ProcessMessages>());
+        } else {
+            process_recipients.insert(modelname, vec![addr.clone().recipient::<ProcessMessages>()]);
         }
-        .unwrap();
-        let addr = llm.start(); // 啟動 Actor，一次即可
-        process_recipients.push(addr.clone().recipient::<ProcessMessages>());
         shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
     }
     HttpServer::new(move || {

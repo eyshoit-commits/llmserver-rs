@@ -9,7 +9,7 @@ use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::{llm::ProcessMessages, utils::OpenAiError};
+use crate::{llm::ProcessMessages, OpenAiError};
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
@@ -83,7 +83,7 @@ pub enum ToolChoice {
 #[derive(Deserialize, Serialize, utoipa::ToSchema, Default)]
 #[schema(
     example = json!({
-        "model": "DeepSeek-R1-Distill-Qwen-7B",
+        "model": "DeepSeek-R1-Distill-Qwen-1.5B",
         "messages": [
             {
                 "role": "developer",
@@ -167,7 +167,7 @@ pub struct ChatCompletionsResponse {
 #[post("/chat/completions")]
 pub async fn chat_completions(
     body: Json<ChatCompletionsRequest>,
-    llm_pool: web::Data<Vec<Recipient<ProcessMessages>>>,
+    llm_pool: web::Data<HashMap::<String,Vec<Recipient<ProcessMessages>>>>,
 ) -> impl Responder {
     let id = "123".to_owned(); // Todo: 要改從資料庫拿
     let created = SystemTime::now();
@@ -175,9 +175,8 @@ pub async fn chat_completions(
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs();
-    // 目前模組就支援一個
-    if body.model != "DeepSeek-R1-Distill-Qwen-7B" {
-        // 目前只支援這個
+    
+    let Some(llm_pool) = llm_pool.get(&body.model) else {
         return HttpResponse::BadRequest().json(OpenAiError {
             message: format!(
                 "The model {} does not exist or you do not have access to it.",
@@ -187,7 +186,7 @@ pub async fn chat_completions(
             r#type: "invalid_request_error".to_owned(),
             param: None,
         });
-    }
+    };
 
     let mut rng = rand::rng();
     let llm = llm_pool.choose(&mut rng).unwrap();
