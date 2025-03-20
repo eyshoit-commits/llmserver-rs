@@ -9,36 +9,7 @@ use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::{llm::ProcessMessages, OpenAiError};
-
-#[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
-#[serde(untagged)]
-pub enum Content {
-    String(String),
-    Array(Vec<String>),
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, utoipa::ToSchema)]
-pub enum Role {
-    #[serde(rename = "system")]
-    System,
-    #[serde(rename = "user")]
-    User,
-    #[serde(rename = "assistant")]
-    Assistant,
-    #[serde(rename = "developer")]
-    Developer,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
-pub struct Message {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Role)]
-    pub role: Option<Role>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Content)]
-    pub content: Option<Content>,
-}
+use crate::{Content, Message, OpenAiError, ProcessMessages, Role};
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct Delta {
@@ -167,7 +138,7 @@ pub struct ChatCompletionsResponse {
 #[post("/chat/completions")]
 pub async fn chat_completions(
     body: Json<ChatCompletionsRequest>,
-    llm_pool: web::Data<HashMap::<String,Vec<Recipient<ProcessMessages>>>>,
+    llm_pool: web::Data<HashMap<String, Vec<Recipient<ProcessMessages>>>>,
 ) -> impl Responder {
     let id = "123".to_owned(); // Todo: 要改從資料庫拿
     let created = SystemTime::now();
@@ -175,7 +146,7 @@ pub async fn chat_completions(
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs();
-    
+
     let Some(llm_pool) = llm_pool.get(&body.model) else {
         return HttpResponse::BadRequest().json(OpenAiError {
             message: format!(

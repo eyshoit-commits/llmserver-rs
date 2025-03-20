@@ -7,13 +7,13 @@ use std::ffi::CString;
 use std::pin::Pin;
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::AIModel;
-use super::ProcessMessages;
-use super::ShutdownMessages;
-use super::LLM;
-
 use autotokenizer::AutoTokenizer;
 use autotokenizer::DefaultPromptMessage;
+
+use crate::AIModel;
+use crate::ProcessMessages;
+use crate::ShutdownMessages;
+use crate::LLM;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SimpleLLMConfig {
@@ -39,17 +39,15 @@ impl actix::Handler<ProcessMessages> for SimpleRkLLM {
     type Result = Result<Pin<Box<dyn futures::Stream<Item = String> + Send + 'static>>, ()>;
 
     fn handle(&mut self, msg: ProcessMessages, _ctx: &mut Self::Context) -> Self::Result {
-        let (tx, rx) = tokio::sync::mpsc::channel(8192);
-
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
         let atoken = self.atoken.clone();
-
         let prompt = msg
             .messages
             .iter()
             .map(|a| {
                 let content = match &a.content {
-                    Some(crate::chat::Content::String(s)) => s,
-                    Some(crate::chat::Content::Array(items)) => &items.join(""),
+                    Some(crate::Content::String(s)) => s,
+                    Some(crate::Content::Array(items)) => &items.join(""),
                     None => "", // 老實說不應該發生
                 };
                 DefaultPromptMessage::new(to_variant_name(&a.role).unwrap(), &content)
@@ -72,7 +70,8 @@ impl actix::Handler<ProcessMessages> for SimpleRkLLM {
         let infer_params_cloned = self.infer_params.clone();
         actix_web::rt::spawn(async move {
             let cb = CallbackSendSelfChannel { sender: Some(tx) };
-            handle.run(RKLLMInput::Prompt(input), Some(infer_params_cloned), cb);
+            // TODO: Maybe someday should have good error handling
+            let _ = handle.run(RKLLMInput::Prompt(input), Some(infer_params_cloned), cb);
         });
 
         // 將 Receiver 轉換為 Stream
@@ -85,7 +84,8 @@ impl actix::Handler<ShutdownMessages> for SimpleRkLLM {
     type Result = Result<(), ()>;
 
     fn handle(&mut self, _: ShutdownMessages, _: &mut Self::Context) -> Self::Result {
-        self.handle.destroy();
+        // TODO: Maybe someday should have good error handling
+        let _ = self.handle.destroy();
         Ok(())
     }
 }

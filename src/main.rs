@@ -4,7 +4,10 @@ use serde::Deserialize;
 use std::{collections::HashMap, fs::File, io::BufReader, net::Ipv4Addr};
 
 use actix_web::{head, middleware::Logger, App, HttpServer, Result};
-use llmserver_rs::llm::{simple::SimpleLLMConfig, AIModel, ProcessMessages, ShutdownMessages};
+use llmserver_rs::{
+    asr::simple::SimpleASRConfig, llm::simple::SimpleLLMConfig, AIModel, ProcessAudio,
+    ProcessMessages, ShutdownMessages,
+};
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -47,14 +50,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let model_name = matches.get_one::<String>("model_name").unwrap();
 
-    // 跑起LLM
-    let mut process_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
+    // Text type LLM
+    let mut llm_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
     let mut shutdown_recipients = Vec::new();
     for _ in 0..num_instances {
         let (llm, modelname) = match (*model_name).as_str() {
             "kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4" => {
-                let file = File::open("assets/config/deepseek-1.5b.json")
-                    .expect("Config simplerkllm.json not found!");
+                let config_path = "assets/config/deepseek-1.5b.json";
+                let file =
+                    File::open(config_path).expect(&format!("Config {} not found!", config_path));
                 let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
                 let config = SimpleLLMConfig::deserialize(&mut de)?;
                 (
@@ -63,8 +67,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             }
             "kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4" => {
-                let file = File::open("assets/config/deepseek-1.5b.json")
-                    .expect("Config simplerkllm.json not found!");
+                let config_path = "assets/config/deepseek-7b.json";
+                let file =
+                    File::open(config_path).expect(&format!("Config {} not found!", config_path));
                 let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
                 let config = SimpleLLMConfig::deserialize(&mut de)?;
                 (
@@ -72,22 +77,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     config.modle_name.clone(),
                 )
             }
-            _ => panic!("Unknown model: {}", model_name),
+            _ => {continue;},
         };
         let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
-        if let Some(vec) = process_recipients.get_mut(&modelname) {
+        if let Some(vec) = llm_recipients.get_mut(&modelname) {
             vec.push(addr.clone().recipient::<ProcessMessages>());
         } else {
-            process_recipients.insert(modelname, vec![addr.clone().recipient::<ProcessMessages>()]);
+            llm_recipients.insert(modelname, vec![addr.clone().recipient::<ProcessMessages>()]);
         }
         shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
     }
+
+    //let mut
+    let mut audio_recipients = HashMap::<String, Vec<Recipient<ProcessAudio>>>::new();
+    for _ in 0..num_instances {
+        let (llm, modelname) = match (*model_name).as_str() {
+            "happyme531/SenseVoiceSmall-RKNN2" => {
+                let config_path = "assets/config/sensevoicesmall.json";
+                let file =
+                    File::open(config_path).expect(&format!("Config {} not found!", config_path));
+                let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
+                let config = SimpleASRConfig::deserialize(&mut de)?;
+                (
+                    llmserver_rs::asr::simple::SimpleASR::init(&config),
+                    config.modle_name.clone(),
+                )
+            }
+            _ => {continue;},
+        };
+        let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
+        if let Some(vec) = audio_recipients.get_mut(&modelname) {
+            vec.push(addr.clone().recipient::<ProcessAudio>());
+        } else {
+            audio_recipients.insert(modelname, vec![addr.clone().recipient::<ProcessAudio>()]);
+        }
+        shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
+    }
+    if audio_recipients.len() == 0 && llm_recipients.len() == 0 {
+        panic!("You do not load any model");
+    }
+
     HttpServer::new(move || {
         let (app, api) = App::new()
-            .app_data(actix_web::web::Data::new(process_recipients.clone()))
+            .app_data(actix_web::web::Data::new(llm_recipients.clone()))
+            .app_data(actix_web::web::Data::new(audio_recipients.clone()))
             .into_utoipa_app()
             .map(|app| app.wrap(Logger::default()))
-            .service(scope::scope("/v1").service(llmserver_rs::chat::chat_completions))
+            .service(
+                scope::scope("/v1")
+                    .service(llmserver_rs::chat::chat_completions)
+                    .service(llmserver_rs::audio::audio_transcriptions),
+            )
             .service(health)
             .split_for_parts();
 
