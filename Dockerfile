@@ -2,7 +2,7 @@ FROM rust:slim-bookworm
 WORKDIR /llmserver-rs
 COPY . /llmserver-rs
 RUN apt update
-RUN apt install clang curl libssl-dev pkg-config -y
+RUN apt install clang curl libssl-dev pkg-config cmake -y
 RUN curl -L https://github.com/airockchip/rknn-llm/raw/refs/heads/main/rkllm-runtime/Linux/librkllm_api/aarch64/librkllmrt.so -o /lib/librkllmrt.so
 RUN cargo build --release
 
