@@ -1,4 +1,4 @@
-# llmserver-rs
+# llmserver-rs [![dependency status](https://deps.rs/repo/github/darkautism/llmserver-rs/status.svg)](https://deps.rs/repo/github/darkautism/llmserver-rs)
 
 A Rust-based, OpenAI-style API server for large language models (LLMs) that can run on the Rknpu
 
