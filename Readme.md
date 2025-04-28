@@ -19,6 +19,7 @@ To install and run `llmserver-rs`, follow these steps:
 
 **Install dep packages:**
 ```bash
+sudo apt update
 sudo apt install clang curl libssl-dev pkg-config cmake libsentencepiece-dev libsentencepiece0 -y
 ```
 
