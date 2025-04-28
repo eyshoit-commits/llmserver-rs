@@ -17,6 +17,11 @@ This project provides a Rust implementation of an API server that mimics the fun
 You must need rknpu driver above 0.9.7.
 To install and run `llmserver-rs`, follow these steps:
 
+**Install dep packages:**
+```bash
+sudo apt install clang curl libssl-dev pkg-config cmake libsentencepiece-dev libsentencepiece0 -y
+```
+
 **Install rknn.so and rkllm.so:**
 ```bash
 sudo curl -L https://github.com/airockchip/rknn-llm/raw/refs/heads/main/rkllm-runtime/Linux/librkllm_api/aarch64/librkllmrt.so -o /lib/librkllmrt.so
