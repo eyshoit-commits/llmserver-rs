@@ -17,16 +17,22 @@ This project provides a Rust implementation of an API server that mimics the fun
 You must need rknpu driver above 0.9.7.
 To install and run `llmserver-rs`, follow these steps:
 
-1. **Clone the Repository**:
+**Install rknn.so and rkllm.so:**
+```bash
+sudo curl -L https://github.com/airockchip/rknn-llm/raw/refs/heads/main/rkllm-runtime/Linux/librkllm_api/aarch64/librkllmrt.so -o /lib/librkllmrt.so
+sudo curl -L https://github.com/airockchip/rknn-toolkit2/raw/refs/heads/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so -o /lib/librknnrt.so
+```
+
+**Clone the Repository**:
 ```bash
 git clone https://github.com/darkautism/llmserver-rs
 ```
-Build the Project:
+**Build the Project:**
 ```bash
 cd llmserver-rs
 cargo build --release
 ```
-Run the Server:
+**Run the Server:**
 ```bash
 ./target/release/llmserver kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4
 ```
