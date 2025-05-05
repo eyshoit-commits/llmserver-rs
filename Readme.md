@@ -97,6 +97,8 @@ This llmserver now only support these modules
 | --- | --- | --- | --- | --- |
 | [kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4) | 2.04GB | 2.07 GB | [link](k8s/deepseek-1.5b.yaml) | |
 | [kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4](https://huggingface.co/kautism/kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4) | 8.19GB | 9+ GB | [link](k8s/deepseek-7b.yaml) | Only work on Opi 5 16 GB model|
+| [thanhtantran/gemma-3-1b-it-rk3588-1.2.0](https://huggingface.co/thanhtantran/gemma-3-1b-it-rk3588-1.2.0) | 1.63GB | 1.17 GB | [link](k8s/deepseek-7b.yaml) | |
+
 
 ### Speech to text model
 | Model Name | Size | Mem usage (Estimated) | Microk8s config | Notes |
