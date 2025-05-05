@@ -77,8 +77,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     config.modle_name.clone(),
                 )
             }
+            "thanhtantran/gemma-3-1b-it-rk3588-1.2.0" => {
+                let config_path = "assets/config/gemma-3-1b-it-rk3588-1.2.0.json";
+                let file =
+                    File::open(config_path).expect(&format!("Config {} not found!", config_path));
+                let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
+                let config = SimpleLLMConfig::deserialize(&mut de)?;
+                (
+                    llmserver_rs::llm::simple::SimpleRkLLM::init(&config),
+                    config.modle_name.clone(),
+                )
+            }
             _ => {continue;},
         };
+        println!("Model : {:?}", llm);
         let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
         if let Some(vec) = llm_recipients.get_mut(&modelname) {
             vec.push(addr.clone().recipient::<ProcessMessages>());

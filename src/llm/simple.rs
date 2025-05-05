@@ -103,8 +103,24 @@ impl AIModel for SimpleRkLLM {
         let c_str = CString::new(modle_path.as_ref()).unwrap();
         param.model_path = c_str.as_ptr();
 
-        let handle = rkllm_init(&mut param)?;
-        let atoken = AutoTokenizer::from_pretrained(config.modle_path.clone(), None)?;
+        let handle = match rkllm_init(&mut param) {
+            Ok(handle) => handle,
+            Err(e) => {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Error initializing RKLLM: {:?}", e),
+                )));
+            }
+        };
+        let atoken = match AutoTokenizer::from_pretrained(config.modle_path.clone(), None) {
+            Ok(atoken) => atoken,
+            Err(e) => {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Error loading tokenizer: {:?}", e),
+                )));
+            }
+        };
 
         let infer_params = RKLLMInferParam {
             mode: RKLLMInferMode::InferGenerate,
@@ -117,6 +133,7 @@ impl AIModel for SimpleRkLLM {
             } else {
                 None
             },
+            ..Default::default()
         };
 
         Ok(SimpleRkLLM {
