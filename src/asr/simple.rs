@@ -13,8 +13,8 @@ use crate::{AIModel, ProcessAudio, ShutdownMessages, AsrText, ASR};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SimpleASRConfig {
-    pub modle_path: String,
-    pub modle_name: String,
+    pub model_repo: String,
+    pub model_name: String,
 }
 
 pub struct SimpleASR {
@@ -81,7 +81,7 @@ impl AIModel for SimpleASR {
         Self: Sized,
     {
         let handle = Arc::new(
-            SenseVoiceSmall::init(&config.modle_path, VADXOptions::default())
+            SenseVoiceSmall::init(&config.model_repo, VADXOptions::default())
                 .map_err(|_| "Load model error")?,
         );
         Ok(SimpleASR { handle })

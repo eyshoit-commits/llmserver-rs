@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = SimpleLLMConfig::deserialize(&mut de)?;
                 (
                     llmserver_rs::llm::simple::SimpleRkLLM::init(&config),
-                    config.modle_name.clone(),
+                    config.model_name.clone(),
                 )
             }
             "kautism/DeepSeek-R1-Distill-Qwen-7B-RK3588S-RKLLM1.1.4" => {
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = SimpleLLMConfig::deserialize(&mut de)?;
                 (
                     llmserver_rs::llm::simple::SimpleRkLLM::init(&config),
-                    config.modle_name.clone(),
+                    config.model_name.clone(),
                 )
             }
             "thanhtantran/gemma-3-1b-it-rk3588-1.2.0" => {
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = SimpleLLMConfig::deserialize(&mut de)?;
                 (
                     llmserver_rs::llm::simple::SimpleRkLLM::init(&config),
-                    config.modle_name.clone(),
+                    config.model_name.clone(),
                 )
             }
             _ => {continue;},
@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = SimpleASRConfig::deserialize(&mut de)?;
                 (
                     llmserver_rs::asr::simple::SimpleASR::init(&config),
-                    config.modle_name.clone(),
+                    config.model_name.clone(),
                 )
             }
             _ => {continue;},

@@ -17,9 +17,10 @@ use crate::LLM;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SimpleLLMConfig {
-    pub modle_path: String,
-    pub modle_name: String,
+    pub model_repo: String,
+    pub model_name: String,
     pub cache_path: Option<String>,
+    pub model_path: Option<String>,
     pub think: bool,
 }
 
@@ -97,10 +98,10 @@ impl AIModel for SimpleRkLLM {
             ..Default::default()
         };
         let api = Api::new().unwrap();
-        let repo = api.model(config.modle_path.clone());
-        let binding = repo.get("model.rkllm")?;
-        let modle_path = binding.to_string_lossy();
-        let c_str = CString::new(modle_path.as_ref()).unwrap();
+        let repo = api.model(config.model_repo.clone());
+        let binding = repo.get(&config.model_path.clone().unwrap_or("model.rkllm".to_owned()))?;
+        let model_path = binding.to_string_lossy();
+        let c_str = CString::new(model_path.as_ref()).unwrap();
         param.model_path = c_str.as_ptr();
 
         let handle = match rkllm_init(&mut param) {
@@ -112,7 +113,7 @@ impl AIModel for SimpleRkLLM {
                 )));
             }
         };
-        let atoken = match AutoTokenizer::from_pretrained(config.modle_path.clone(), None) {
+        let atoken = match AutoTokenizer::from_pretrained(config.model_repo.clone(), None) {
             Ok(atoken) => atoken,
             Err(e) => {
                 return Err(Box::new(std::io::Error::new(

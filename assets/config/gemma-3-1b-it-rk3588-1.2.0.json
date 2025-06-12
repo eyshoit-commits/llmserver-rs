@@ -1,5 +1,5 @@
 {
-    "modle_path": "thanhtantran/gemma-3-1b-it-rk3588-1.2.0",
-    "modle_name": "gemma-3-1b-it-rk3588-1.2.0",
+    "model_repo": "thanhtantran/gemma-3-1b-it-rk3588-1.2.0",
+    "model_name": "gemma-3-1b-it-rk3588-1.2.0",
     "think" : false 
 }
