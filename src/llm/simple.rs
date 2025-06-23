@@ -1,7 +1,6 @@
 use actix::Actor;
 use hf_hub::api::sync::Api;
 use rkllm_rs::prelude::*;
-use serde::Deserialize;
 use serde_variant::to_variant_name;
 use std::ffi::CString;
 use std::pin::Pin;
@@ -14,22 +13,14 @@ use crate::AIModel;
 use crate::ProcessMessages;
 use crate::ShutdownMessages;
 use crate::LLM;
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SimpleLLMConfig {
-    pub model_repo: String,
-    pub model_name: String,
-    pub cache_path: Option<String>,
-    pub model_path: Option<String>,
-    pub think: bool,
-}
+use crate::utils::ModelConfig;
 
 #[derive(Debug)]
 pub struct SimpleRkLLM {
     handle: LLMHandle,
     atoken: AutoTokenizer,
     infer_params: RKLLMInferParam,
-    config: SimpleLLMConfig,
+    config: ModelConfig,
 }
 
 impl Actor for SimpleRkLLM {
@@ -63,7 +54,7 @@ impl actix::Handler<ProcessMessages> for SimpleRkLLM {
             }
         };
         // TODO: 用參數判斷要不要think
-        if !self.config.think {
+        if !self.config.think.unwrap_or(false) {
             input += "\n\n</think>\n\n";
         }
 
@@ -92,8 +83,8 @@ impl actix::Handler<ShutdownMessages> for SimpleRkLLM {
 }
 
 impl AIModel for SimpleRkLLM {
-    type Config = SimpleLLMConfig;
-    fn init(config: &SimpleLLMConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    type Config = ModelConfig;
+    fn init(config: &ModelConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut param = RKLLMParam {
             ..Default::default()
         };

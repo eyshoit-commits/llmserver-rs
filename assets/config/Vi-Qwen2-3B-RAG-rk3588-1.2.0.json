@@ -1,0 +1,7 @@
+{
+    "model_repo": "thanhtantran/Vi-Qwen2-3B-RAG-rk3588-1.2.0",
+    "model_name": "model-1",
+    "model_path": "Vi-Qwen2-3B-RAG-rk3588-w8a8-opt-1-hybrid-ratio-0.0.rkllm",
+    "model_type" : "LLM",
+    "think" : false 
+}
