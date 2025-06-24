@@ -89,7 +89,10 @@ http://*<*your node ip not cluster ip*>*:31106/swagger-ui/
 
 ## Support module
 
-This llmserver now only support these modules
+llmserver support all of pure text to text model now. You can write your own config place in [assets/config](assets/config).
+
+
+Here is tested model llmserver supported.
 
 ### Text generation model
 
