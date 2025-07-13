@@ -54,7 +54,8 @@ impl actix::Handler<ProcessMessages> for SimpleRkLLM {
             }
         };
         // TODO: 用參數判斷要不要think
-        if !self.config.think.unwrap_or(false) {
+        let think = self.config.think.unwrap_or(false);
+        if !think {
             input += "\n\n</think>\n\n";
         }
 
@@ -63,7 +64,11 @@ impl actix::Handler<ProcessMessages> for SimpleRkLLM {
         actix_web::rt::spawn(async move {
             let cb = CallbackSendSelfChannel { sender: Some(tx) };
             // TODO: Maybe someday should have good error handling
-            let _ = handle.run(RKLLMInput::Prompt(input), Some(infer_params_cloned), cb);
+            let _ = handle.run(RKLLMInput{
+                input_type: RKLLMInputType::Prompt(input.clone()),
+                enable_thinking: think,
+                role: RKLLMInputRole::User,
+            }, Some(infer_params_cloned), cb);
         });
 
         // 將 Receiver 轉換為 Stream
