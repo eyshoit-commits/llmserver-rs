@@ -59,6 +59,11 @@ export PGML_TLS_MODE=disable
 ```
 
 Refer to [docs/pgml-admin.md](docs/pgml-admin.md) for Supabase instructions, including the TLS-required `PGML_TLS_MODE=require` configuration, and advanced operations.
+# 3. Point llmserver-rs to the database
+export DATABASE_URL="postgresql://pgml_admin:${PGML_POSTGRES_PASSWORD}@localhost:6543/pgml"
+```
+
+Refer to [docs/pgml-admin.md](docs/pgml-admin.md) for Supabase instructions and advanced operations.
 
 ## Install on cluster
 
