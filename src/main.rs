@@ -8,11 +8,12 @@ use std::{
     net::Ipv4Addr,
 };
 
-use actix_web::{head, middleware::Logger, App, HttpServer, Result};
+use actix_web::{head, middleware::Logger, web, App, HttpServer, Result};
 use llmserver_rs::{
-    asr::simple::SimpleASRConfig, utils::ModelConfig, AIModel, ProcessAudio, ProcessMessages,
-    ShutdownMessages,
+    admin, asr::simple::SimpleASRConfig, db::PgmlRepository, utils::ModelConfig, AIModel,
+    ProcessAudio, ProcessMessages, ShutdownMessages,
 };
+use log::{info, warn};
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -63,8 +64,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Command::new("rkllm")
         .about("Stupid webserver ever!")
         .version(VERSION)
-        .arg_required_else_help(true)
-        .arg(Arg::new("model_name"))
+        .arg(
+            Arg::new("model_name")
+                .long("model-name")
+                .value_name("MODEL_REPO")
+                .default_value("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
+                .help("Model repository identifier as defined in assets/config/*.json"),
+        )
         .arg(
             Arg::new("instances")
                 .short('i')
@@ -74,13 +80,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .get_matches();
 
+    let pgml_repository = match PgmlRepository::try_from_env().await {
+        Ok(repo) => repo,
+        Err(err) => {
+            warn!("Failed to initialise PGML repository: {}", err);
+            None
+        }
+    };
+
+    if pgml_repository.is_none() {
+        warn!("PGML Admin dashboard disabled: DATABASE_URL is not configured");
+    }
+    let pgml_repository = web::Data::new(pgml_repository);
+
+    let admin_auth_config = admin::AdminAuthConfig::from_env();
+    if admin_auth_config.is_enabled() {
+        info!(
+            "Admin dashboard authentication enabled via {}",
+            admin::ADMIN_API_TOKEN_ENV
+        );
+    } else {
+        warn!(
+            "Admin dashboard authentication disabled: set {} to protect admin APIs",
+            admin::ADMIN_API_TOKEN_ENV
+        );
+    }
+    let admin_auth_config = web::Data::new(admin_auth_config);
+
     //初始化模型
     let mut num_instances = 1; // 根據資源設定
 
     if let Some(value) = matches.get_one::<usize>("instances") {
         num_instances = *value;
     }
-    let model_name = matches.get_one::<String>("model_name").unwrap();
+    let model_name = matches
+        .get_one::<String>("model_name")
+        .expect("model_name should always have a default value");
 
     // Text type LLM
     let mut llm_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
@@ -135,15 +170,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("Model {} not found in the configuration!", model_name);
         }
     }
-    
+
     if audio_recipients.len() == 0 && llm_recipients.len() == 0 {
         panic!("You do not load any model");
     }
 
     HttpServer::new(move || {
+        let pgml_repository = pgml_repository.clone();
+        let admin_auth_config = admin_auth_config.clone();
         let (app, api) = App::new()
-            .app_data(actix_web::web::Data::new(llm_recipients.clone()))
-            .app_data(actix_web::web::Data::new(audio_recipients.clone()))
+            .app_data(web::Data::new(llm_recipients.clone()))
+            .app_data(web::Data::new(audio_recipients.clone()))
+            .app_data(pgml_repository.clone())
+            .app_data(admin_auth_config.clone())
             .into_utoipa_app()
             .map(|app| app.wrap(Logger::default()))
             .service(
@@ -151,12 +190,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .service(llmserver_rs::chat::chat_completions)
                     .service(llmserver_rs::audio::audio_transcriptions),
             )
+            .service(
+                scope::scope("/admin/api")
+                    .service(admin::create_session)
+                    .service(admin::list_models)
+                    .service(admin::register_model)
+                    .service(admin::delete_model),
+            )
+            .service(web::resource("/admin").route(web::get().to(admin::dashboard)))
             .service(health)
             .split_for_parts();
 
         app.service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api))
     })
-    .bind((Ipv4Addr::UNSPECIFIED, 8080))?
+    .bind((Ipv4Addr::UNSPECIFIED, 8443))?
     .run()
     .await?;
 
