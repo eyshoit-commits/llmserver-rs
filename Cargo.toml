@@ -14,7 +14,7 @@ actix-web = "4.11.0"
 serde = { version = "1.0.219", features = ["derive"] }
 actix-service = "2.0.3"
 futures = "0.3.31"
-tokio = "1.45.1"
+tokio = { version = "1.45.1", features = ["rt-multi-thread", "macros", "sync"] }
 utoipa-actix-web = "0.1.2"
 utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web"] }
 serde_json = "1.0.140"
@@ -30,3 +30,17 @@ clap = "4.5.39"
 actix-multipart = "0.7.2"
 sensevoice-rs = "0.1.2"
 hound = "3.5.1"
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+argon2 = "0.5.3"
+uuid = { version = "1.11.0", features = ["v4"] }
+once_cell = "1.20.2"
+base64 = "0.22.1"
+sha2 = "0.10.8"
+chacha20poly1305 = { version = "0.10.1", features = ["std"] }
+rand_core = "0.9.3"
+thiserror = "1.0.69"
+chrono = { version = "0.4.39", features = ["clock"] }
+r2d2 = "0.8.10"
+r2d2-sqlite = "0.24.0"
+walkdir = "2.5.0"
+hex = "0.4.3"
