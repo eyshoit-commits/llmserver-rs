@@ -8,6 +8,7 @@ This document describes how `llmserver-rs` integrates with [PostgresML](https://
 * The API automatically enables the Admin Dashboard when the `DATABASE_URL` environment variable is present.
 * Operators can load HuggingFace or Supabase models as PGML pipelines without leaving the dashboard.
 * Supabase is the preferred managed backend. `docker-compose.supabase.yml` provisions a Supabase Postgres service and installs PGML via the [`eyshoit-commits/pgml`](https://github.com/eyshoit-commits/pgml) image.
+* The implementation prefers a lightweight PostgresML instance derived from the [`docker-rust-postgres`](https://github.com/docker/docker-rust-postgres/) template. If a self-managed deployment is not possible, Supabase can be used as an alternative backend.
 
 ## Database Schema
 
@@ -70,6 +71,9 @@ The `pgml-extension` service depends on the Supabase database. It issues the PGM
 ## Supabase alternative
 
 If you prefer Supabase's hosted control plane instead of the bundled compose stack:
+## Supabase alternative
+
+If Docker-based PostgresML is not an option:
 
 1. Create a Supabase project and enable the `vector` extension (`Database → Extensions`).
 2. Within the Supabase SQL editor run:
@@ -87,6 +91,11 @@ The Admin Dashboard honours the TLS mode automatically. When `PGML_TLS_MODE=requ
 Supabase exposes a managed Postgres instance that is compatible with the dashboard workflows. You can still run `docker-compose.pgml.yml` locally for development and switch to Supabase in production.
 
 ## Admin Dashboard & Authentication
+4. Ensure the service role key is stored securely (for example via the hosting platform's secret manager).
+
+Supabase exposes a managed Postgres instance that is compatible with the dashboard workflows. You can still run `docker-compose.pgml.yml` locally for development and switch to Supabase in production.
+
+## Admin Dashboard
 
 Navigate to `/admin` to access the SPA-like dashboard:
 
@@ -104,6 +113,12 @@ The default CLI argument loads `TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF` from `as
 ## Security Recommendations
 
 * Store `PGML_POSTGRES_PASSWORD`, `SUPABASE_DB_PASSWORD`, `ADMIN_API_TOKEN`, and `DATABASE_URL` in a vault or the orchestrator's secret management facility.
+
+The UI communicates over the `/admin/api` REST endpoints, which are also described in Swagger (`/swagger-ui`).
+
+## Security Recommendations
+
+* Store `PGML_POSTGRES_PASSWORD` and `DATABASE_URL` in a vault or the orchestrator's secret management facility.
 * Restrict network access to port `6543` (or the custom port chosen for Postgres) to trusted hosts.
 * If Supabase is used, rotate service role keys frequently and enable row-level security policies where appropriate.
 * Apply TLS termination in front of `llmserver-rs` when exposing the Admin Dashboard to the public internet.

@@ -2,6 +2,7 @@ use actix_web::{
     delete, get, post,
     web::{self, Json, Path},
     HttpRequest, HttpResponse, Responder,
+    HttpResponse, Responder,
 };
 use log::{error, warn};
 use serde::{Deserialize, Serialize};
@@ -78,6 +79,9 @@ impl AdminAuthConfig {
     }
 }
 
+
+const DASHBOARD_HTML: &str = include_str!("../assets/admin-dashboard.html");
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RagModelListResponse {
     pub models: Vec<StoredModel>,
@@ -153,6 +157,7 @@ pub async fn list_models(
         return resp;
     }
 
+pub async fn list_models(repo: web::Data<Option<PgmlRepository>>) -> impl Responder {
     let Some(repository) = repo.get_ref() else {
         return HttpResponse::ServiceUnavailable().json(AdminErrorResponse::new(
             "PGML repository is not configured. Set DATABASE_URL to enable the Admin dashboard.",
@@ -193,6 +198,9 @@ pub async fn register_model(
         return resp;
     }
 
+    repo: web::Data<Option<PgmlRepository>>,
+    payload: Json<RagModelRequest>,
+) -> impl Responder {
     let Some(repository) = repo.get_ref() else {
         return HttpResponse::ServiceUnavailable().json(AdminErrorResponse::new(
             "PGML repository is not configured. Set DATABASE_URL to enable the Admin dashboard.",
@@ -253,6 +261,9 @@ pub async fn delete_model(
         return resp;
     }
 
+    repo: web::Data<Option<PgmlRepository>>,
+    pipeline_name: Path<String>,
+) -> impl Responder {
     let Some(repository) = repo.get_ref() else {
         return HttpResponse::ServiceUnavailable().json(AdminErrorResponse::new(
             "PGML repository is not configured. Set DATABASE_URL to enable the Admin dashboard.",
@@ -275,6 +286,7 @@ pub async fn dashboard(
     repo: web::Data<Option<PgmlRepository>>,
     auth: web::Data<AdminAuthConfig>,
 ) -> impl Responder {
+pub async fn dashboard(repo: web::Data<Option<PgmlRepository>>) -> impl Responder {
     if repo.get_ref().is_none() {
         return HttpResponse::ServiceUnavailable().body(
             "<html><body><h1>PGML dashboard disabled</h1><p>Set the DATABASE_URL environment variable to enable the admin interface.</p></body></html>",
@@ -291,4 +303,7 @@ pub async fn dashboard(
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(body)
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(DASHBOARD_HTML)
 }

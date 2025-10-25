@@ -33,10 +33,24 @@
             box-shadow: 0 22px 48px rgba(2, 132, 199, 0.25);
             margin-bottom: 1.5rem;
         }
+            max-width: 960px;
+            line-height: 1.5;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        h1, h2 {
+            color: #38bdf8;
+        }
         form {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 1rem;
+            margin-bottom: 2rem;
+            background: rgba(15, 23, 42, 0.8);
+            padding: 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 40px rgba(8, 112, 227, 0.2);
+            border: 1px solid rgba(56, 189, 248, 0.2);
         }
         label {
             display: flex;
@@ -59,6 +73,15 @@
             min-height: 120px;
             resize: vertical;
         }
+        input, textarea {
+            margin-top: 0.35rem;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            background: rgba(15, 23, 42, 0.6);
+            color: inherit;
+            font-size: 0.95rem;
+        }
         button {
             padding: 0.85rem 1.5rem;
             border-radius: 999px;
@@ -76,6 +99,18 @@
         .models {
             display: grid;
             gap: 1rem;
+        }
+        .card {
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            box-shadow: 0 8px 30px rgba(8, 112, 227, 0.2);
+        }
+        .card h3 {
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+            color: #a5b4fc;
         }
         .badge {
             display: inline-flex;
@@ -185,6 +220,12 @@
         </ol>
         <p class="muted">The TinyLlama startup model is available out-of-the-box so you can validate the full ingestion workflow without downloading multi-gigabyte checkpoints.</p>
     </div>
+    </style>
+</head>
+<body>
+    <h1>PostgresML Admin Dashboard</h1>
+    <p>Manage PGML pipelines, load Retrieval-Augmented Generation (RAG) models, and push them directly into the Postgres database.</p>
+    <p style="margin-top:-0.5rem;font-size:0.9rem;opacity:0.85;">Need a managed backend? Provision a TLS-enabled instance via <a href="https://github.com/supabase/supabase" target="_blank" rel="noopener" style="color:#38bdf8;">Supabase</a> and set <code>PGML_TLS_MODE=require</code> before opening this dashboard.</p>
 
     <form id="model-form">
         <label>
@@ -426,6 +467,150 @@
                 authGate.classList.add('active');
             }
         })();
+            <input type="text" name="pipeline_name" required placeholder="rag_support_bot" />
+        </label>
+        <label>
+            Model URI
+            <input type="text" name="model_uri" required placeholder="hf://org/model-name" />
+        </label>
+        <label>
+            Task
+            <input type="text" name="task" required placeholder="rag" />
+        </label>
+        <label>
+            Collection Name
+            <input type="text" name="collection_name" required placeholder="support_documents" />
+        </label>
+        <label style="grid-column: 1 / -1;">
+            Metadata (JSON)
+            <textarea name="metadata" rows="4" placeholder='{"chunk_size":512,"description":"Support knowledge base"}'></textarea>
+        </label>
+        <div style="grid-column: 1 / -1; display:flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+            <button type="submit">Register / Update Pipeline</button>
+            <span id="form-status"></span>
+        </div>
+    </form>
+
+    <section>
+        <h2>Registered Pipelines</h2>
+        <div id="model-list" class="models"></div>
+    </section>
+
+    <template id="model-card-template">
+        <div class="card">
+            <h3 data-field="pipeline_name"></h3>
+            <div>
+                <span class="badge" data-field="task"></span>
+                <span class="badge" data-field="collection_name"></span>
+            </div>
+            <p><strong>Model:</strong> <span data-field="model_uri"></span></p>
+            <div class="status" data-field="status"></div>
+            <pre class="metadata" data-field="metadata"></pre>
+            <button class="danger" data-action="delete">Delete Pipeline</button>
+        </div>
+    </template>
+
+    <script>
+        const list = document.getElementById("model-list");
+        const template = document.getElementById("model-card-template");
+        const form = document.getElementById("model-form");
+        const status = document.getElementById("form-status");
+
+        const fetchModels = async () => {
+            list.innerHTML = "<p>Loading pipelines...</p>";
+            try {
+                const response = await fetch("/admin/api/models");
+                if (!response.ok) {
+                    const error = await response.json();
+                    list.innerHTML = `<p class="danger">${error.message}</p>`;
+                    return;
+                }
+                const payload = await response.json();
+                if (!payload.models.length) {
+                    list.innerHTML = "<p>No pipelines registered yet.</p>";
+                    return;
+                }
+
+                list.innerHTML = "";
+                payload.models.forEach((model) => {
+                    const node = template.content.cloneNode(true);
+                    node.querySelector('[data-field="pipeline_name"]').textContent = model.pipeline_name;
+                    node.querySelector('[data-field="task"]').textContent = model.task;
+                    node.querySelector('[data-field="collection_name"]').textContent = model.collection_name;
+                    node.querySelector('[data-field="model_uri"]').textContent = model.model_uri;
+                    const metadataField = node.querySelector('[data-field="metadata"]');
+                    metadataField.textContent = JSON.stringify(model.metadata ?? {}, null, 2);
+                    const statusField = node.querySelector('[data-field="status"]');
+                    statusField.innerHTML = `<strong>Status:</strong> ${model.last_status}`;
+                    if (model.last_error) {
+                        statusField.innerHTML += `<br/><span class="danger">${model.last_error}</span>`;
+                    }
+                    node.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+                        if (!confirm(`Delete pipeline ${model.pipeline_name}?`)) {
+                            return;
+                        }
+                        const result = await fetch(`/admin/api/models/${encodeURIComponent(model.pipeline_name)}`, {
+                            method: "DELETE",
+                        });
+                        if (!result.ok && result.status !== 204) {
+                            alert("Failed to delete pipeline");
+                        }
+                        await fetchModels();
+                    });
+                    list.appendChild(node);
+                });
+            } catch (err) {
+                list.innerHTML = `<p class="danger">Failed to load pipelines: ${err}</p>`;
+            }
+        };
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            status.textContent = "";
+            const formData = new FormData(form);
+            let metadata = {};
+            const metadataRaw = formData.get("metadata");
+            if (metadataRaw) {
+                try {
+                    metadata = JSON.parse(metadataRaw);
+                } catch (err) {
+                    status.textContent = "Metadata must be valid JSON";
+                    status.className = "danger";
+                    return;
+                }
+            }
+            const payload = {
+                pipeline_name: formData.get("pipeline_name"),
+                model_uri: formData.get("model_uri"),
+                task: formData.get("task"),
+                collection_name: formData.get("collection_name"),
+                metadata,
+            };
+            try {
+                const response = await fetch("/admin/api/models", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(payload),
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    status.textContent = error.message;
+                    status.className = "danger";
+                    return;
+                }
+                status.textContent = "Pipeline saved successfully";
+                status.className = "";
+                form.reset();
+                await fetchModels();
+            } catch (err) {
+                status.textContent = `Failed to submit pipeline: ${err}`;
+                status.className = "danger";
+            }
+        });
+
+        fetchModels();
     </script>
 </body>
 </html>
