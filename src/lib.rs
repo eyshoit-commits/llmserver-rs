@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod asr;
 pub mod audio;
+pub mod auth;
 pub mod chat;
 pub mod db;
 pub mod llm;

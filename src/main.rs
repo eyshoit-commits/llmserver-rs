@@ -1,12 +1,5 @@
-use actix::{Actor, Recipient};
-use clap::{Arg, ArgAction, Command};
-use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::{BufReader, Read},
-    net::Ipv4Addr,
-};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use actix_web::{head, middleware::Logger, web, App, HttpServer, Result};
 use llmserver_rs::{
@@ -44,21 +37,25 @@ fn load_model_configs() -> Result<HashMap<String, ModelConfig>, Box<dyn std::err
     Ok(configs)
 }
 
-/// Get health of the API.
-#[utoipa::path(
-    responses(
-        (status = OK, description = "Success", body = str, content_type = "text/plain")
-    )
-)]
-#[head("/health")]
+#[get("/health")]
 async fn health() -> &'static str {
     ""
 }
 
+fn decode_hex_key(value: &str, expected_len: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let bytes = hex::decode(value)?;
+    if bytes.len() != expected_len {
+        return Err(format!("expected {expected_len} bytes but decoded {}", bytes.len()).into());
+    }
+    Ok(bytes)
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-    std::env::set_var("RUST_LOG", "info");
+    std::env::set_var(
+        "RUST_LOG",
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+    );
     env_logger::init();
 
     let matches = Command::new("rkllm")
@@ -154,6 +151,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         panic!("You do not load any model");
     }
 
+    let bind_address =
+        std::env::var("LLMSERVER_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8443".to_string());
+
     HttpServer::new(move || {
         let pgml_repository = pgml_repository.clone();
         let (app, api) = App::new()
@@ -163,9 +163,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_utoipa_app()
             .map(|app| app.wrap(Logger::default()))
             .service(
-                scope::scope("/v1")
-                    .service(llmserver_rs::chat::chat_completions)
-                    .service(llmserver_rs::audio::audio_transcriptions),
+                web::scope("/admin/api")
+                    .route("/login", web::post().to(auth::login))
+                    .route("/logout", web::post().to(auth::logout))
+                    .route("/session", web::get().to(auth::current_admin))
+                    .route("/users", web::post().to(auth::create_admin))
+                    .route("/api-keys", web::get().to(api_keys::list_api_keys))
+                    .route("/api-keys", web::post().to(api_keys::create_api_key))
+                    .route("/api-keys/{id}", web::patch().to(api_keys::update_api_key))
+                    .route("/api-keys/{id}", web::delete().to(api_keys::delete_api_key))
+                    .route("/hf-tokens", web::get().to(huggingface::list_tokens))
+                    .route("/hf-tokens", web::put().to(huggingface::upsert_token))
+                    .route(
+                        "/hf-tokens/{name}",
+                        web::delete().to(huggingface::delete_token),
+                    )
+                    .route("/models", web::get().to(models::list_models))
+                    .route("/models", web::post().to(models::create_model))
+                    .route("/models/{id}", web::get().to(models::get_model))
+                    .route("/models/{id}", web::delete().to(models::delete_model))
+                    .route(
+                        "/models/{id}/download",
+                        web::post().to(models::download_model),
+                    )
+                    .route("/models/{id}/start", web::post().to(models::start_model))
+                    .route("/models/{id}/stop", web::post().to(models::stop_model)),
             )
             .service(
                 scope::scope("/admin/api")
@@ -175,21 +197,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .service(web::resource("/admin").route(web::get().to(admin::dashboard)))
             .service(health)
-            .split_for_parts();
-
-        app.service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api))
+            .service(Files::new("/admin", "./assets/admin").index_file("index.html"))
     })
     .bind((Ipv4Addr::UNSPECIFIED, 8443))?
     .run()
     .await?;
 
-    let shutdowns = shutdown_recipients.into_iter().map(|addr| async move {
-        let _ = addr.send(ShutdownMessages).await.unwrap();
-    });
-
-    tokio::spawn(async {
-        futures::future::join_all(shutdowns).await;
-    })
-    .await?;
     Ok(())
 }
