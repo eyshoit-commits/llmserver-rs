@@ -1,20 +1,30 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use clap::{Arg, ArgAction, Command};
+use std::{
+    fs,
+    net::Ipv4Addr,
+    path::{Path, PathBuf},
+};
 
-use actix_web::{head, middleware::Logger, web, App, HttpServer, Result};
+use actix_web::{head, middleware::Logger, web::Data, App, HttpServer, Result};
 use llmserver_rs::{
-    admin, asr::simple::SimpleASRConfig, db::PgmlRepository, utils::ModelConfig, AIModel,
-    ProcessAudio, ProcessMessages, ShutdownMessages,
+    admin, audio, chat,
+    crypto::{CryptoError, SecretCipher},
+    db::Database,
+    hf::HuggingFaceDownloader,
+    manager::ModelManager,
+    utils::ModelConfig,
 };
 use log::warn;
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_swagger_ui::SwaggerUi;
 
-fn load_model_configs() -> Result<HashMap<String, ModelConfig>, Box<dyn std::error::Error>> {
+fn load_model_configs(
+) -> Result<std::collections::HashMap<String, ModelConfig>, Box<dyn std::error::Error>> {
     let dir_path = "assets/config";
     let entries = fs::read_dir(dir_path).map_err(|e| e.to_string())?;
 
-    let mut configs: HashMap<String, ModelConfig> = HashMap::new();
+    let mut configs: std::collections::HashMap<String, ModelConfig> =
+        std::collections::HashMap::new();
 
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -58,98 +68,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     env_logger::init();
 
-    let matches = Command::new("rkllm")
-        .about("Stupid webserver ever!")
+    let matches = Command::new("llmserver")
+        .about("Unified management and inference server for text and speech models")
         .version(VERSION)
-        .arg_required_else_help(true)
-        .arg(Arg::new("model_name"))
+        .arg(
+            Arg::new("model")
+                .short('m')
+                .long("model")
+                .num_args(1)
+                .action(ArgAction::Append)
+                .help("Preload a model by its repository identifier"),
+        )
         .arg(
             Arg::new("instances")
                 .short('i')
-                .help("How many llm instances do you want to create.")
-                .action(ArgAction::Set)
+                .long("instances")
+                .help("Instances to start for each preloaded model")
+                .value_parser(clap::value_parser!(usize).range(1..))
                 .num_args(1),
         )
         .get_matches();
 
-    let pgml_repository = match PgmlRepository::try_from_env().await {
-        Ok(repo) => repo,
-        Err(err) => {
-            warn!("Failed to initialise PGML repository: {}", err);
-            None
+    let preload_repos: Vec<String> = matches
+        .get_many::<String>("model")
+        .map(|vals| vals.cloned().collect())
+        .unwrap_or_default();
+    let preload_instances = matches.get_one::<usize>("instances").copied().unwrap_or(1);
+
+    let cipher = SecretCipher::from_env().map_err(|err| match err {
+        CryptoError::MissingMasterKey => {
+            eprintln!(
+                "LLMSERVER_MASTER_KEY environment variable is required. You can generate one with: {}",
+                SecretCipher::random_master_key()
+            );
+            err
         }
-    };
+        _ => err,
+    })?;
 
-    if pgml_repository.is_none() {
-        warn!("PGML Admin dashboard disabled: DATABASE_URL is not configured");
+    let db_path =
+        std::env::var("LLMSERVER_DATABASE").unwrap_or_else(|_| "data/llm-admin.db".to_string());
+    let database = Database::initialise(Path::new(&db_path), cipher)?;
+    if let Some(password) = database.bootstrap_admin().await? {
+        println!(
+            "[bootstrap] Created default admin account. username=admin password={}. Please change it immediately via the web UI.",
+            password
+        );
     }
-    let pgml_repository = web::Data::new(pgml_repository);
-
-    //初始化模型
-    let mut num_instances = 1; // 根據資源設定
-
-    if let Some(value) = matches.get_one::<usize>("instances") {
-        num_instances = *value;
-    }
-    let model_name = matches.get_one::<String>("model_name").unwrap();
-
-    // Text type LLM
-    let mut llm_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
-    let mut audio_recipients = HashMap::<String, Vec<Recipient<ProcessAudio>>>::new();
-    let mut shutdown_recipients = Vec::new();
 
     let model_config_table = load_model_configs()?;
+    let manager = ModelManager::new(model_config_table.clone());
 
-    for _ in 0..num_instances {
-        if let Some(config) = model_config_table.get(model_name) {
-            if config.model_type == llmserver_rs::utils::ModelType::LLM {
-                let llm = llmserver_rs::llm::simple::SimpleRkLLM::init(&config);
-                let model_name = config.model_name.clone();
-
-                let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
-                if let Some(vec) = llm_recipients.get_mut(&model_name) {
-                    vec.push(addr.clone().recipient::<ProcessMessages>());
-                } else {
-                    llm_recipients.insert(
-                        model_name,
-                        vec![addr.clone().recipient::<ProcessMessages>()],
-                    );
-                }
-                shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
-            } else if config.model_type == llmserver_rs::utils::ModelType::ASR {
-                let (llm, modelname) = match (*model_name).as_str() {
-                    "happyme531/SenseVoiceSmall-RKNN2" => {
-                        let config_path = "assets/config/sensevoicesmall.json";
-                        let file = File::open(config_path)
-                            .expect(&format!("Config {} not found!", config_path));
-                        let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
-                        let config = SimpleASRConfig::deserialize(&mut de)?;
-                        (
-                            llmserver_rs::asr::simple::SimpleASR::init(&config),
-                            config.model_name.clone(),
-                        )
-                    }
-                    _ => {
-                        continue;
-                    }
-                };
-                let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
-                if let Some(vec) = audio_recipients.get_mut(&modelname) {
-                    vec.push(addr.clone().recipient::<ProcessAudio>());
-                } else {
-                    audio_recipients
-                        .insert(modelname, vec![addr.clone().recipient::<ProcessAudio>()]);
-                }
-                shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
-            }
-        } else {
-            panic!("Model {} not found in the configuration!", model_name);
+    for repo in preload_repos {
+        if let Err(err) = manager.start_instances(&repo, preload_instances).await {
+            eprintln!("Failed to preload {repo}: {err}");
         }
     }
 
-    if audio_recipients.len() == 0 && llm_recipients.len() == 0 {
-        panic!("You do not load any model");
-    }
+    let cache_dir =
+        std::env::var("LLMSERVER_MODEL_CACHE").unwrap_or_else(|_| "data/model-cache".to_string());
+    let downloader = HuggingFaceDownloader::new(PathBuf::from(cache_dir))?;
+
+    let database_data = Data::new(database.clone());
+    let manager_data = Data::new(manager.clone());
+    let downloader_data = Data::new(downloader.clone());
 
     let bind_address =
         std::env::var("LLMSERVER_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8443".to_string());
@@ -157,51 +139,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     HttpServer::new(move || {
         let pgml_repository = pgml_repository.clone();
         let (app, api) = App::new()
-            .app_data(web::Data::new(llm_recipients.clone()))
-            .app_data(web::Data::new(audio_recipients.clone()))
-            .app_data(pgml_repository.clone())
+            .app_data(database_data.clone())
+            .app_data(manager_data.clone())
+            .app_data(downloader_data.clone())
             .into_utoipa_app()
             .map(|app| app.wrap(Logger::default()))
             .service(
-                web::scope("/admin/api")
-                    .route("/login", web::post().to(auth::login))
-                    .route("/logout", web::post().to(auth::logout))
-                    .route("/session", web::get().to(auth::current_admin))
-                    .route("/users", web::post().to(auth::create_admin))
-                    .route("/api-keys", web::get().to(api_keys::list_api_keys))
-                    .route("/api-keys", web::post().to(api_keys::create_api_key))
-                    .route("/api-keys/{id}", web::patch().to(api_keys::update_api_key))
-                    .route("/api-keys/{id}", web::delete().to(api_keys::delete_api_key))
-                    .route("/hf-tokens", web::get().to(huggingface::list_tokens))
-                    .route("/hf-tokens", web::put().to(huggingface::upsert_token))
-                    .route(
-                        "/hf-tokens/{name}",
-                        web::delete().to(huggingface::delete_token),
-                    )
-                    .route("/models", web::get().to(models::list_models))
-                    .route("/models", web::post().to(models::create_model))
-                    .route("/models/{id}", web::get().to(models::get_model))
-                    .route("/models/{id}", web::delete().to(models::delete_model))
-                    .route(
-                        "/models/{id}/download",
-                        web::post().to(models::download_model),
-                    )
-                    .route("/models/{id}/start", web::post().to(models::start_model))
-                    .route("/models/{id}/stop", web::post().to(models::stop_model)),
-            )
-            .service(
-                scope::scope("/admin/api")
-                    .service(admin::list_models)
-                    .service(admin::register_model)
-                    .service(admin::delete_model),
+                scope::scope("/v1")
+                    .service(chat::chat_completions)
+                    .service(audio::audio_transcriptions)
+                    .service(audio::audio_speech),
             )
             .service(web::resource("/admin").route(web::get().to(admin::dashboard)))
             .service(health)
-            .service(Files::new("/admin", "./assets/admin").index_file("index.html"))
+            .configure(admin::configure)
+            .split_for_parts();
+
+        app.service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api))
     })
     .bind((Ipv4Addr::UNSPECIFIED, 8443))?
     .run()
     .await?;
 
+    manager.shutdown_all().await;
     Ok(())
 }

@@ -1,16 +1,19 @@
 use actix_web::{
     post,
-    web::{self, Json},
-    HttpRequest, HttpResponse, Responder,
+    web::{self, Data, Json},
+    HttpResponse, Responder,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
-use crate::state::AppState;
 use crate::{
-    api_keys::{extract_api_key, record_token_usage, validate_api_key},
-    tokenizer::{count_messages_tokens, count_text_tokens},
+    auth::ApiKeyIdentity,
+    db::Database,
+    manager::ModelManager,
+    token::{estimate_messages_tokens, estimate_text_tokens},
     Content, Message, OpenAiError, ProcessMessages, Role,
 };
 
@@ -140,51 +143,20 @@ pub struct ChatCompletionsResponse {
 )]
 #[post("/chat/completions")]
 pub async fn chat_completions(
-    req: HttpRequest,
+    api_key: ApiKeyIdentity,
     body: Json<ChatCompletionsRequest>,
-    state: web::Data<AppState>,
+    manager: Data<ModelManager>,
+    db: Data<Database>,
 ) -> impl Responder {
-    let id = "123".to_owned(); // Todo: 要改從資料庫拿
+    let id = Uuid::new_v4().to_string();
     let created = SystemTime::now();
     let created = created
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs();
 
-    let Some(api_key) = extract_api_key(&req) else {
-        return HttpResponse::Unauthorized().finish();
-    };
-
-    let api_key_info = match validate_api_key(&state.pool, &api_key).await {
-        Ok(Some(info)) => info,
-        Ok(None) => return HttpResponse::Unauthorized().finish(),
-        Err(err) => return err,
-    };
-
-    if body.stream.unwrap_or(false) {
-        return HttpResponse::NotImplemented().json(OpenAiError {
-            message: "Streaming responses are not supported when API key enforcement is enabled."
-                .to_string(),
-            code: "stream_not_supported".to_owned(),
-            r#type: "invalid_request_error".to_owned(),
-            param: None,
-        });
-    }
-
-    let prompt_tokens = count_messages_tokens(&body.messages);
-    if let Some(limit) = api_key_info.token_limit {
-        let current_total = api_key_info.prompt_tokens_used + api_key_info.completion_tokens_used;
-        if current_total + prompt_tokens >= limit {
-            return HttpResponse::TooManyRequests().json(OpenAiError {
-                message: "token quota exceeded".to_owned(),
-                code: "quota_exceeded".to_owned(),
-                r#type: "rate_limit_exceeded".to_owned(),
-                param: None,
-            });
-        }
-    }
-
-    let Some(llm) = state.model_manager.choose_llm(&body.model).await else {
+    let llm_pool = manager.llm_pool().await;
+    let Some(llm_pool) = llm_pool.get(&body.model) else {
         return HttpResponse::BadRequest().json(OpenAiError {
             message: format!(
                 "The model {} does not exist or you do not have access to it.",
@@ -202,26 +174,123 @@ pub async fn chat_completions(
 
     match actix_web::rt::time::timeout(std::time::Duration::from_secs(5), send_future).await {
         Ok(Ok(Ok(receiver))) => {
-            let chunks = receiver.collect::<Vec<_>>().await;
-            let content = chunks.join("");
-            let completion_tokens = count_text_tokens(&content);
+            let prompt_tokens = estimate_messages_tokens(&body.messages);
+            if body.stream.unwrap_or(false) {
+                let object = "chat.completion.chunk".to_owned();
+                let stream_counter = Arc::new(Mutex::new(0usize));
+                let completions = Arc::new(Mutex::new(String::new()));
+                let db_clone = db.clone();
+                let model_name = body.model.clone();
+                let api_key_id = api_key.id();
+                let sse_stream = receiver.then(move |content| {
+                    let db = db_clone.clone();
+                    let model_name = model_name.clone();
+                    let completions = completions.clone();
+                    let stream_counter = stream_counter.clone();
+                    let object_clone = object.clone();
+                    let id_clone = id.clone();
+                    async move {
+                        let mut counter = stream_counter.lock().await;
+                        let is_first = *counter == 0;
+                        *counter += 1;
+                        drop(counter);
 
-            let usage = Usage {
-                completion_tokens: completion_tokens as i32,
-                prompt_tokens: prompt_tokens as i32,
-                total_tokens: (completion_tokens + prompt_tokens) as i32,
-            };
+                        if !content.is_empty() {
+                            let mut buffer = completions.lock().await;
+                            buffer.push_str(&content);
+                        } else {
+                            let text = {
+                                let mut buffer = completions.lock().await;
+                                std::mem::take(&mut *buffer)
+                            };
+                            let completion_tokens = estimate_text_tokens(&text);
+                            let _ = db
+                                .record_token_usage(
+                                    api_key_id,
+                                    &model_name,
+                                    prompt_tokens,
+                                    completion_tokens,
+                                )
+                                .await;
+                        }
 
-            if let Err(err) = record_token_usage(
-                &state.pool,
-                &api_key_info.id,
-                &body.model,
-                prompt_tokens,
-                completion_tokens,
-            )
-            .await
-            {
-                return err;
+                        let choices = vec![Choice {
+                            index: 0,
+                            finish_reason: if content.is_empty() {
+                                Some(FinishReason::Stop)
+                            } else {
+                                None
+                            },
+                            message: Some(Message {
+                                role: if is_first {
+                                    Some(Role::Assistant)
+                                } else {
+                                    None
+                                },
+                                content: if content.is_empty() {
+                                    None
+                                } else {
+                                    Some(Content::String(content.clone()))
+                                },
+                            }),
+                            delta: None,
+                        }];
+
+                        let chunk = ChatCompletionsResponse {
+                            id: id_clone.clone(),
+                            object: object_clone.clone(),
+                            created,
+                            choices,
+                            usage: None,
+                        };
+
+                        let sse_data = serde_json::to_string(&chunk).unwrap() + "\n";
+                        Ok::<web::Bytes, actix_web::Error>(web::Bytes::from(sse_data))
+                    }
+                });
+                actix_web::HttpResponse::Ok()
+                    .content_type("text/event-stream")
+                    .streaming(sse_stream)
+            } else {
+                let a = receiver.collect::<Vec<_>>().await;
+                let content = a.join("");
+
+                let object = "chat.completion".to_owned();
+                let completion_tokens = estimate_text_tokens(&content);
+                let usage = Usage {
+                    completion_tokens: completion_tokens as i32,
+                    prompt_tokens: prompt_tokens as i32,
+                    total_tokens: (prompt_tokens + completion_tokens) as i32,
+                };
+                let choices = vec![Choice {
+                    index: 0,
+                    message: Some(Message {
+                        role: Some(Role::Assistant),
+                        content: Some(Content::String(content)),
+                    }),
+                    delta: None,
+                    finish_reason: Some(FinishReason::Stop),
+                }];
+
+                if let Err(err) = db
+                    .record_token_usage(api_key.id(), &body.model, prompt_tokens, completion_tokens)
+                    .await
+                {
+                    return HttpResponse::InternalServerError().json(OpenAiError {
+                        message: format!("Failed to record usage: {}", err),
+                        code: "usage_record_error".to_owned(),
+                        r#type: "internal_error".to_owned(),
+                        param: None,
+                    });
+                }
+
+                HttpResponse::Ok().json(ChatCompletionsResponse {
+                    id,
+                    object,
+                    created,
+                    choices,
+                    usage: Some(usage),
+                })
             }
 
             let object = "chat.completion".to_owned();

@@ -8,30 +8,6 @@ pub enum ModelType {
     TTS,
 }
 
-impl std::fmt::Display for ModelType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            ModelType::LLM => "LLM",
-            ModelType::ASR => "ASR",
-            ModelType::TTS => "TTS",
-        };
-        write!(f, "{value}")
-    }
-}
-
-impl std::str::FromStr for ModelType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "LLM" | "llm" => Ok(ModelType::LLM),
-            "ASR" | "asr" => Ok(ModelType::ASR),
-            "TTS" | "tts" => Ok(ModelType::TTS),
-            other => Err(format!("unknown model type: {other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ModelConfig {
     pub model_repo: String,
