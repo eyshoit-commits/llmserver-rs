@@ -1,7 +1,8 @@
+pub mod asr;
 pub mod audio;
 pub mod chat;
+pub mod knowledge;
 pub mod llm;
-pub mod asr;
 pub mod utils;
 
 use std::{io::Read, pin::Pin};
