@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    time::{Duration, SystemTime},
+};
 
 use actix::Recipient;
 use actix_web::{
@@ -6,12 +10,11 @@ use actix_web::{
     web::{self, Json},
     HttpResponse, Responder,
 };
+use futures::StreamExt;
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ajeto::{build_messages, timestamp_ms, AjetoEngine, AjetoError, AjetoInvocation},
-    OpenAiError, ProcessMessages,
-};
+use crate::{Content, Message, OpenAiError, ProcessMessages, Role};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_MAX_CANDIDATES: usize = 8;
@@ -238,15 +241,22 @@ impl Default for KarmaConfig {
 
 #[derive(Debug, Clone)]
 pub struct KarmaOrchestrator {
-    engine: AjetoEngine,
+    llm_pool: Vec<Recipient<ProcessMessages>>,
     config: KarmaConfig,
+}
+
+#[derive(Debug, Clone)]
+struct KarmaAgentCall<T> {
+    raw: String,
+    parsed: Option<T>,
 }
 
 impl KarmaOrchestrator {
     pub fn new(llm_pool: Vec<Recipient<ProcessMessages>>, config: Option<KarmaConfig>) -> Self {
-        let config = config.unwrap_or_default();
-        let engine = AjetoEngine::new(llm_pool, Duration::from_secs(config.request_timeout_secs));
-        Self { engine, config }
+        Self {
+            llm_pool,
+            config: config.unwrap_or_default(),
+        }
     }
 
     pub async fn enrich(
@@ -412,27 +422,22 @@ impl KarmaOrchestrator {
         prompt.push_str("\nDocument:\n");
         prompt.push_str(document);
 
-        let messages = build_messages(
+        let messages = self.build_messages(
             Some(&prompt),
             None,
             "Return only JSON following the schema.",
         );
-        let agent_name = KarmaAgentKind::Extractor.to_string();
-        let invocation = self
-            .engine
-            .invoke::<KarmaExtractorOutput>(&agent_name, messages)
-            .await?;
-        let AjetoInvocation { raw, parsed } = invocation;
-        let parsed_successfully = parsed.is_some();
+        let call: KarmaAgentCall<KarmaExtractorOutput> =
+            self.call_agent(KarmaAgentKind::Extractor, messages).await?;
 
         Ok(KarmaExtractorCall {
-            parsed: parsed.clone(),
+            parsed: call.parsed,
             log: KarmaAgentLog {
                 agent: KarmaAgentKind::Extractor,
                 prompt,
-                response: raw,
-                timestamp_ms: timestamp_ms(),
-                parsed_successfully,
+                response: call.raw,
+                timestamp_ms: current_timestamp_ms(),
+                parsed_successfully: call.parsed.is_some(),
             },
         })
     }
@@ -457,25 +462,83 @@ impl KarmaOrchestrator {
         prompt.push_str(":\n");
         prompt.push_str(document);
 
-        let messages = build_messages(Some(&prompt), None, "Return the validation JSON now.");
-        let agent_name = KarmaAgentKind::Validator.to_string();
-        let invocation = self
-            .engine
-            .invoke::<KarmaValidatorDecision>(&agent_name, messages)
-            .await?;
-        let AjetoInvocation { raw, parsed } = invocation;
-        let parsed_successfully = parsed.is_some();
+        let messages = self.build_messages(Some(&prompt), None, "Return the validation JSON now.");
+        let call: KarmaAgentCall<KarmaValidatorDecision> =
+            self.call_agent(KarmaAgentKind::Validator, messages).await?;
 
         Ok(KarmaValidatorCall {
-            parsed: parsed.clone(),
+            parsed: call.parsed,
             log: KarmaAgentLog {
                 agent: KarmaAgentKind::Validator,
                 prompt,
-                response: raw,
-                timestamp_ms: timestamp_ms(),
-                parsed_successfully,
+                response: call.raw,
+                timestamp_ms: current_timestamp_ms(),
+                parsed_successfully: call.parsed.is_some(),
             },
         })
+    }
+
+    fn build_messages(
+        &self,
+        system_prompt: Option<&str>,
+        developer_prompt: Option<&str>,
+        user_prompt: &str,
+    ) -> Vec<Message> {
+        let mut messages = Vec::new();
+        if let Some(system) = system_prompt {
+            messages.push(Message {
+                role: Some(Role::System),
+                content: Some(Content::String(system.to_string())),
+            });
+        }
+        if let Some(developer) = developer_prompt {
+            messages.push(Message {
+                role: Some(Role::Developer),
+                content: Some(Content::String(developer.to_string())),
+            });
+        }
+        messages.push(Message {
+            role: Some(Role::User),
+            content: Some(Content::String(user_prompt.to_string())),
+        });
+        messages
+    }
+
+    async fn call_agent<T: for<'de> Deserialize<'de> + Send + 'static + Clone>(
+        &self,
+        agent: KarmaAgentKind,
+        messages: Vec<Message>,
+    ) -> Result<KarmaAgentCall<T>, KarmaError> {
+        let mut rng = rand::rng();
+        let Some(llm) = self.llm_pool.choose(&mut rng) else {
+            return Err(KarmaError::new("Model pool is empty"));
+        };
+        let send_future = llm.send(ProcessMessages { messages });
+        match actix_web::rt::time::timeout(
+            Duration::from_secs(self.config.request_timeout_secs),
+            send_future,
+        )
+        .await
+        {
+            Ok(Ok(Ok(stream))) => {
+                let chunks = stream.collect::<Vec<_>>().await;
+                let raw = chunks.join("");
+                let parsed = parse_agent_json::<T>(&raw);
+                Ok(KarmaAgentCall { raw, parsed })
+            }
+            Ok(Ok(Err(_))) => Err(KarmaError::new(format!(
+                "{} agent returned an empty stream",
+                agent
+            ))),
+            Ok(Err(e)) => Err(KarmaError::new(format!(
+                "{} agent mailbox error: {}",
+                agent, e
+            ))),
+            Err(_) => Err(KarmaError::new(format!(
+                "{} agent timed out after {} seconds",
+                agent, self.config.request_timeout_secs
+            ))),
+        }
     }
 }
 
@@ -497,7 +560,73 @@ struct KarmaValidatorCall {
     log: KarmaAgentLog,
 }
 
-pub type KarmaError = AjetoError;
+#[derive(Debug)]
+pub struct KarmaError {
+    message: String,
+}
+
+impl KarmaError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for KarmaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for KarmaError {}
+
+fn parse_agent_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Option<T> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let candidate = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        Some(trimmed.to_string())
+    } else if let Some(start) = trimmed.find('{') {
+        let end = trimmed.rfind('}')?;
+        Some(trimmed[start..=end].to_string())
+    } else if let Some(start) = trimmed.find('[') {
+        let end = trimmed.rfind(']')?;
+        Some(trimmed[start..=end].to_string())
+    } else {
+        None
+    }?;
+
+    let sanitized = strip_json_code_fence(&candidate);
+    serde_json::from_str::<T>(&sanitized).ok()
+}
+
+fn strip_json_code_fence(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.starts_with("```") {
+        let mut lines = trimmed.lines();
+        lines.next();
+        let mut collected = Vec::new();
+        for line in lines {
+            if line.trim_start().starts_with("```") {
+                break;
+            }
+            collected.push(line);
+        }
+        collected.join("\n")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn current_timestamp_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default()
+}
 
 #[utoipa::path(
     request_body = KarmaEnrichmentRequest,

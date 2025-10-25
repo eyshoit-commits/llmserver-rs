@@ -100,7 +100,7 @@ Authorization: Bearer <token>
 - **Model reuse** – The orchestrator reuses the already loaded RKLLM actors. It does not spin up additional model instances, ensuring that the feature can be deployed without extra GPU/NPUs.
 - **Timeouts** – Each agent invocation is limited by a configurable timeout (30 seconds by default). Calls that exceed the timeout are reported back as validation errors without aborting the entire enrichment run.
 - **Result determinism** – Candidate limits (default 8 per document) and sequential validation are used to keep output predictable even when multiple LLM workers are available.
-- **Hot swapping** – Because the orchestration layer is pure Rust, implemented with the reusable `AjetoEngine`, and leverages the existing actor pool, it can be updated or replaced without restarting the RKLLM runtime.
+- **Hot swapping** – Because the orchestration layer is pure Rust and leverages the existing actor pool, it can be updated or replaced without restarting the RKLLM runtime.
 
 ## Extensibility
 
