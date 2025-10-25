@@ -174,6 +174,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|app| app.wrap(Logger::default()))
             .service(
                 scope::scope("/v1")
+                    .service(llmserver_rs::chat::chat_completions)
+                    .service(llmserver_rs::audio::audio_transcriptions)
+                    .service(llmserver_rs::knowledge::karma::karma_enrich),
                     .service(chat::chat_completions)
                     .service(audio::audio_transcriptions)
                     .service(audio::audio_speech),
