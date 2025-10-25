@@ -12,6 +12,8 @@ This project provides a Rust implementation of an API server that mimics the fun
 - **Rust Language**: Utilizes Rust for its performance, safety, and concurrency features.
 - **Hardware Compatibility**: Specifically designed to run on the rknpu, powered by the rk3588 chip.
 - **PGML Admin Dashboard**: Load and manage RAG-ready PostgresML pipelines directly from the web UI. See [docs/pgml-admin.md](docs/pgml-admin.md).
+- **Secure Supabase integration**: Ship a Supabase-ready compose stack with PGML migrations and bearer-protected admin APIs.
+- **TinyLlama startup model**: Boot with the lightweight TinyLlama Q8_0 checkpoint for instant smoke tests.
 
 ## Installation
 
@@ -41,7 +43,38 @@ cargo build --release
 ```
 **Run the Server:**
 ```bash
-./target/release/llmserver kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4
+cargo run --release
+```
+The default startup checkpoint is TinyLlama. Override it with `-- --model-name <MODEL_REPO>` to load any configuration present under `assets/config/`.
+
+### Enable the PostgresML Admin Dashboard
+
+```bash
+# 1. Provide a secure password (or use .env / secret manager)
+export PGML_POSTGRES_PASSWORD='pGml-Admin#2025!Secure'
+
+# 2. Launch the lightweight PostgresML instance (listens on 6543)
+docker compose -f docker-compose.pgml.yml up -d
+
+# 3. Point llmserver-rs to the database (disable TLS for the local compose service)
+export DATABASE_URL="postgresql://pgml_admin:${PGML_POSTGRES_PASSWORD}@localhost:6543/pgml"
+export PGML_TLS_MODE=disable
+export ADMIN_API_TOKEN='Paste-A-Unique-Production-Token'
+```
+
+Refer to [docs/pgml-admin.md](docs/pgml-admin.md) for Supabase instructions, including the TLS-required `PGML_TLS_MODE=require` configuration, and advanced operations.
+
+### Supabase compose quickstart
+
+Spin up Supabase locally, provision PostgresML via the `eyshoit-commits/pgml` image, and point the server at the resulting connection string:
+
+```bash
+export SUPABASE_DB_PASSWORD='Supabase#RotateMe2025!'
+docker compose -f docker-compose.supabase.yml up -d
+
+export DATABASE_URL="postgresql://postgres:${SUPABASE_DB_PASSWORD}@localhost:7654/postgres"
+export PGML_TLS_MODE=require
+export ADMIN_API_TOKEN='Paste-A-Unique-Production-Token'
 ```
 
 ### Enable the PostgresML Admin Dashboard

@@ -9,6 +9,8 @@ use actix_web::{head, middleware::Logger, web, App, HttpServer, Result};
 use llmserver_rs::{
     admin, asr::simple::SimpleASRConfig, db::PgmlRepository, utils::ModelConfig, AIModel,
     ProcessAudio, ProcessMessages, ShutdownMessages,
+};
+use log::{info, warn};
 use actix_web::{head, middleware::Logger, web::Data, App, HttpServer, Result};
 use llmserver_rs::{
     admin, audio, chat,
@@ -76,6 +78,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .about("Unified management and inference server for text and speech models")
         .version(VERSION)
         .arg(
+            Arg::new("model_name")
+                .long("model-name")
+                .value_name("MODEL_REPO")
+                .default_value("TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
+                .help("Model repository identifier as defined in assets/config/*.json"),
             Arg::new("model")
                 .short('m')
                 .long("model")
@@ -105,6 +112,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warn!("PGML Admin dashboard disabled: DATABASE_URL is not configured");
     }
     let pgml_repository = web::Data::new(pgml_repository);
+
+    let admin_auth_config = admin::AdminAuthConfig::from_env();
+    if admin_auth_config.is_enabled() {
+        info!(
+            "Admin dashboard authentication enabled via {}",
+            admin::ADMIN_API_TOKEN_ENV
+        );
+    } else {
+        warn!(
+            "Admin dashboard authentication disabled: set {} to protect admin APIs",
+            admin::ADMIN_API_TOKEN_ENV
+        );
+    }
+    let admin_auth_config = web::Data::new(admin_auth_config);
 
     //初始化模型
     let mut num_instances = 1; // 根據資源設定
@@ -137,6 +158,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             password
         );
     }
+    let model_name = matches
+        .get_one::<String>("model_name")
+        .expect("model_name should always have a default value");
+
+    // Text type LLM
+    let mut llm_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
+    let mut audio_recipients = HashMap::<String, Vec<Recipient<ProcessAudio>>>::new();
+    let mut shutdown_recipients = Vec::new();
 
     let model_config_table = load_model_configs()?;
     let manager = ModelManager::new(model_config_table.clone());
@@ -163,10 +192,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     HttpServer::new(move || {
         let pgml_repository = pgml_repository.clone();
+        let admin_auth_config = admin_auth_config.clone();
         let (app, api) = App::new()
             .app_data(web::Data::new(llm_recipients.clone()))
             .app_data(web::Data::new(audio_recipients.clone()))
             .app_data(pgml_repository.clone())
+            .app_data(admin_auth_config.clone())
             .app_data(database_data.clone())
             .app_data(manager_data.clone())
             .app_data(downloader_data.clone())
@@ -183,6 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .service(
                 scope::scope("/admin/api")
+                    .service(admin::create_session)
                     .service(admin::list_models)
                     .service(admin::register_model)
                     .service(admin::delete_model),
