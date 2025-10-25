@@ -11,6 +11,7 @@ This project provides a Rust implementation of an API server that mimics the fun
 - **OpenAI-style API**: Compatible with OpenAI's API endpoints for easy integration.
 - **Rust Language**: Utilizes Rust for its performance, safety, and concurrency features.
 - **Hardware Compatibility**: Specifically designed to run on the rknpu, powered by the rk3588 chip.
+- **PGML Admin Dashboard**: Load and manage RAG-ready PostgresML pipelines directly from the web UI. See [docs/pgml-admin.md](docs/pgml-admin.md).
 
 ## Installation
 
@@ -42,6 +43,21 @@ cargo build --release
 ```bash
 ./target/release/llmserver kautism/DeepSeek-R1-Distill-Qwen-1.5B-RK3588S-RKLLM1.1.4
 ```
+
+### Enable the PostgresML Admin Dashboard
+
+```bash
+# 1. Provide a secure password (or use .env / secret manager)
+export PGML_POSTGRES_PASSWORD='pGml-Admin#2025!Secure'
+
+# 2. Launch the lightweight PostgresML instance (listens on 6543)
+docker compose -f docker-compose.pgml.yml up -d
+
+# 3. Point llmserver-rs to the database
+export DATABASE_URL="postgresql://pgml_admin:${PGML_POSTGRES_PASSWORD}@localhost:6543/pgml"
+```
+
+Refer to [docs/pgml-admin.md](docs/pgml-admin.md) for Supabase instructions and advanced operations.
 
 ## Install on cluster
 
@@ -112,7 +128,7 @@ Here is tested model llmserver supported.
 
 ## Usage
 
-You can access the online documentation at http://localhost:8080/swagger-ui/, which includes request examples and curl demo code.
+You can access the online documentation at http://localhost:8443/swagger-ui/, which includes request examples and curl demo code. When `DATABASE_URL` is configured, the PGML dashboard is exposed at http://localhost:8443/admin.
 
 The API server provides the following endpoints:
 
@@ -127,7 +143,7 @@ yourname@hostname$ cargo run happyme531/SenseVoiceSmall-RKNN2
 [2025-03-20T07:55:18Z INFO  hf_hub] Using token file found "/home/kautism/.cache/huggingface/token"
 [2025-03-20T07:55:27Z INFO  actix_server::builder] starting 8 workers
 [2025-03-20T07:55:27Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
-[2025-03-20T07:55:27Z INFO  actix_server::server] starting service: "actix-web-service-0.0.0.0:8080", workers: 8, listening on: 0.0.0.0:8080
+[2025-03-20T07:55:27Z INFO  actix_server::server] starting service: "actix-web-service-0.0.0.0:8443", workers: 8, listening on: 0.0.0.0:8443
 [2025-03-20T07:57:59Z INFO  actix_web::middleware::logger] 127.0.0.1 "POST /v1/audio/transcriptions HTTP/1.1" 400 150 "-" "curl/8.9.1" 0.017539
 TempFile { file: NamedTempFile("/tmp/.tmpgH49L9"), content_type: Some("application/octet-stream"), file_name: Some("output.wav"), size: 1289994 }
 Text("SenseVoiceSmall")
@@ -136,7 +152,7 @@ Text("SenseVoiceSmall")
 
 Client Side:(please change your wav path)
 ```Bash
-yourname@hostname$ curl http://localhost:8080/v1/audio/transcriptions -H "Content-Type: multipart/form-data"   -F file="@/home/kautism/.cache/huggingface/hub/models--happyme531--SenseVoiceSmall-RKNN2/snapshots/01bc98205905753b7caafd6da25c84fba2490b59/output.wav"   -F model="SenseVoiceSmall"
+yourname@hostname$ curl http://localhost:8443/v1/audio/transcriptions -H "Content-Type: multipart/form-data"   -F file="@/home/kautism/.cache/huggingface/hub/models--happyme531--SenseVoiceSmall-RKNN2/snapshots/01bc98205905753b7caafd6da25c84fba2490b59/output.wav"   -F model="SenseVoiceSmall"
 
 {"text":"大家好喵今天给大家分享的是在线一线语音生成网站的合集能够更加方便大家选择自己想要生成的角色四进入网站可以看到所有的生成模型都在这里选择你想要深层的角色点击进入就来到我频到了生成的页面在文本框内输入你想要生成的内容然后点击生成就好了另外呢因为每次的生成结果都会更都会有一些不一样的地方如果您觉得第一次的生成效果不好的话可以尝试重新生成也可以稍微调节一下像的住址再生成试试上使用时一定要遵守法律法规不可以损害刷害人的形象哦"}
 ```
