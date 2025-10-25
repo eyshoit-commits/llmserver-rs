@@ -24,7 +24,7 @@ This document describes the KARMA-style multi-agent enrichment pipeline that is 
 3. **Validator agent** verifies each candidate against the supporting document and the current graph state before it is merged.
 4. The orchestrator merges accepted triples, records rejected ones, and maintains an audit log containing prompts, raw model responses and parsing status per agent call.
 
-All agents rely on the same model instances that power chat completions. Calls are routed through the Actix actor pool already configured for `ProcessMessages`, which keeps the implementation hot-swappable with existing deployments.
+All agents are orchestrated by the in-tree [`ajeto`](../src/ajeto/mod.rs) engine. The engine mirrors the execution primitives of the upstream [porkbrain/ajeto](https://github.com/porkbrain/ajeto) project and binds them directly to the RKLLM-backed actor pool that already powers chat completions. Each agent invocation is routed through the shared `ProcessMessages` recipients, which keeps the implementation hot-swappable with existing deployments and avoids any additional worker processes.
 
 ## API Specification
 
@@ -109,4 +109,5 @@ Future improvements can introduce:
 - Specialised agents for entity linking or ontology alignment.
 - External tooling hooks (search, retrieval) by extending the validator prompts.
 - Persistence adapters that automatically push the enriched graph to a backing store.
+- Reusable agent templates contributed upstream to the `ajeto` project, allowing additional workflows (e.g. ontology alignment or QA) to reuse the same execution substrate.
 

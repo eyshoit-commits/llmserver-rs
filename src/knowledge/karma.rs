@@ -381,18 +381,23 @@ impl KarmaOrchestrator {
         prompt.push_str("Current graph snapshot (JSON):\n");
         prompt.push_str(&graph.as_prompt_context());
 
-        let messages = self.build_messages(Some(&prompt), None, "Return the JSON plan now.");
-        let call: KarmaAgentCall<KarmaPlannerOutput> =
-            self.call_agent(KarmaAgentKind::Planner, messages).await?;
+        let messages = build_messages(Some(&prompt), None, "Return the JSON plan now.");
+        let agent_name = KarmaAgentKind::Planner.to_string();
+        let invocation = self
+            .engine
+            .invoke::<KarmaPlannerOutput>(&agent_name, messages)
+            .await?;
+        let AjetoInvocation { raw, parsed } = invocation;
+        let parsed_successfully = parsed.is_some();
 
         Ok(KarmaPlannerCall {
-            parsed: call.parsed,
+            parsed: parsed.clone(),
             log: KarmaAgentLog {
                 agent: KarmaAgentKind::Planner,
                 prompt,
-                response: call.raw,
-                timestamp_ms: current_timestamp_ms(),
-                parsed_successfully: call.parsed.is_some(),
+                response: raw,
+                timestamp_ms: timestamp_ms(),
+                parsed_successfully,
             },
         })
     }
