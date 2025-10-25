@@ -1,11 +1,9 @@
-use actix::Recipient;
 use actix_web::{
     post,
     web::{self, Data, Json},
     HttpResponse, Responder,
 };
 use futures::StreamExt;
-use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
@@ -170,9 +168,6 @@ pub async fn chat_completions(
         });
     };
 
-    let mut rng = rand::rng();
-    let llm = llm_pool.choose(&mut rng).unwrap();
-
     let send_future = llm.send(ProcessMessages {
         messages: body.messages.clone(),
     });
@@ -297,6 +292,25 @@ pub async fn chat_completions(
                     usage: Some(usage),
                 })
             }
+
+            let object = "chat.completion".to_owned();
+            let choices = vec![Choice {
+                index: 0,
+                message: Some(Message {
+                    role: Some(Role::Assistant),
+                    content: Some(Content::String(content)),
+                }),
+                delta: None,
+                finish_reason: Some(FinishReason::Stop),
+            }];
+
+            HttpResponse::Ok().json(ChatCompletionsResponse {
+                id,
+                object,
+                created,
+                choices,
+                usage: Some(usage),
+            })
         }
         Ok(Ok(Err(e))) => HttpResponse::InternalServerError().json(OpenAiError {
             message: format!("Internal processing error: {:?}", e),

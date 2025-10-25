@@ -14,6 +14,7 @@ use llmserver_rs::{
     manager::ModelManager,
     utils::ModelConfig,
 };
+use log::warn;
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -46,21 +47,25 @@ fn load_model_configs(
     Ok(configs)
 }
 
-/// Get health of the API.
-#[utoipa::path(
-    responses(
-        (status = OK, description = "Success", body = str, content_type = "text/plain")
-    )
-)]
-#[head("/health")]
+#[get("/health")]
 async fn health() -> &'static str {
     ""
 }
 
+fn decode_hex_key(value: &str, expected_len: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let bytes = hex::decode(value)?;
+    if bytes.len() != expected_len {
+        return Err(format!("expected {expected_len} bytes but decoded {}", bytes.len()).into());
+    }
+    Ok(bytes)
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-    std::env::set_var("RUST_LOG", "info");
+    std::env::set_var(
+        "RUST_LOG",
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+    );
     env_logger::init();
 
     let matches = Command::new("llmserver")
@@ -128,7 +133,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manager_data = Data::new(manager.clone());
     let downloader_data = Data::new(downloader.clone());
 
+    let bind_address =
+        std::env::var("LLMSERVER_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8443".to_string());
+
     HttpServer::new(move || {
+        let pgml_repository = pgml_repository.clone();
         let (app, api) = App::new()
             .app_data(database_data.clone())
             .app_data(manager_data.clone())
@@ -141,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .service(audio::audio_transcriptions)
                     .service(audio::audio_speech),
             )
+            .service(web::resource("/admin").route(web::get().to(admin::dashboard)))
             .service(health)
             .configure(admin::configure)
             .split_for_parts();

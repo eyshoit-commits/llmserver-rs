@@ -1,14 +1,14 @@
+use actix::Recipient;
 use actix_multipart::form::{tempfile::TempFile, text::Text, MultipartForm};
-use actix_web::{post, web::Data, HttpResponse, Responder};
-use base64::Engine as _;
+use actix_web::{post, HttpRequest, HttpResponse, Responder};
 use futures::StreamExt;
-use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    auth::ApiKeyIdentity, db::Database, manager::ModelManager, token::estimate_text_tokens,
-    OpenAiError, ProcessAudio, ProcessTts,
+    api_keys::{extract_api_key, validate_api_key},
+    state::AppState,
+    OpenAiError, ProcessAudio,
 };
 
 #[derive(Deserialize, Serialize, utoipa::ToSchema)]
@@ -32,13 +32,21 @@ struct UploadForm {
 )]
 #[post("/audio/transcriptions")]
 pub async fn audio_transcriptions(
-    api_key: ApiKeyIdentity,
+    req: HttpRequest,
     form: MultipartForm<UploadForm>,
-    manager: Data<ModelManager>,
-    db: Data<Database>,
+    state: actix_web::web::Data<AppState>,
 ) -> impl Responder {
-    let asr_pool = manager.asr_pool().await;
-    let Some(asr_pool) = asr_pool.get(&form.model.0) else {
+    let Some(api_key) = extract_api_key(&req) else {
+        return HttpResponse::Unauthorized().finish();
+    };
+
+    match validate_api_key(&state.pool, &api_key).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return HttpResponse::Unauthorized().finish(),
+        Err(err) => return err,
+    }
+
+    let Some(asr) = state.model_manager.choose_asr(&form.model.0).await else {
         return HttpResponse::BadRequest().json(OpenAiError {
             message: format!(
                 "The model {} does not exist or you do not have access to it.",
@@ -50,8 +58,6 @@ pub async fn audio_transcriptions(
         });
     };
 
-    let mut rng = rand::rng();
-    let asr = asr_pool.choose(&mut rng).unwrap();
     let path = form.file.file.as_ref().to_string_lossy().to_string();
     let send_future = asr.send(ProcessAudio::FilePath(path));
 
