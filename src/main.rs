@@ -135,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             panic!("Model {} not found in the configuration!", model_name);
         }
     }
-    
+
     if audio_recipients.len() == 0 && llm_recipients.len() == 0 {
         panic!("You do not load any model");
     }
@@ -149,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .service(
                 scope::scope("/v1")
                     .service(llmserver_rs::chat::chat_completions)
-                    .service(llmserver_rs::audio::audio_transcriptions),
+                    .service(llmserver_rs::audio::audio_transcriptions)
+                    .service(llmserver_rs::knowledge::karma::karma_enrich),
             )
             .service(health)
             .split_for_parts();
