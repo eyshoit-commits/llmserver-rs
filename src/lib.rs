@@ -1,16 +1,10 @@
-pub mod api_keys;
+pub mod admin;
 pub mod asr;
 pub mod audio;
 pub mod auth;
 pub mod chat;
-pub mod database;
-pub mod encryption;
-pub mod huggingface;
+pub mod db;
 pub mod llm;
-pub mod models;
-pub mod state;
-pub mod tokenizer;
-pub mod tts;
 pub mod utils;
 
 use std::{io::Read, pin::Pin};
