@@ -5,6 +5,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use actix_web::{head, middleware::Logger, web, App, HttpServer, Result};
+use llmserver_rs::{
+    admin, asr::simple::SimpleASRConfig, db::PgmlRepository, utils::ModelConfig, AIModel,
+    ProcessAudio, ProcessMessages, ShutdownMessages,
 use actix_web::{head, middleware::Logger, web::Data, App, HttpServer, Result};
 use llmserver_rs::{
     admin, audio, chat,
@@ -89,6 +93,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .get_matches();
 
+    let pgml_repository = match PgmlRepository::try_from_env().await {
+        Ok(repo) => repo,
+        Err(err) => {
+            warn!("Failed to initialise PGML repository: {}", err);
+            None
+        }
+    };
+
+    if pgml_repository.is_none() {
+        warn!("PGML Admin dashboard disabled: DATABASE_URL is not configured");
+    }
+    let pgml_repository = web::Data::new(pgml_repository);
+
+    //初始化模型
+    let mut num_instances = 1; // 根據資源設定
+
+    if let Some(value) = matches.get_one::<usize>("instances") {
+        num_instances = *value;
     let preload_repos: Vec<String> = matches
         .get_many::<String>("model")
         .map(|vals| vals.cloned().collect())
@@ -125,6 +147,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if audio_recipients.len() == 0 && llm_recipients.len() == 0 {
+        panic!("You do not load any model");
+    }
     let cache_dir =
         std::env::var("LLMSERVER_MODEL_CACHE").unwrap_or_else(|_| "data/model-cache".to_string());
     let downloader = HuggingFaceDownloader::new(PathBuf::from(cache_dir))?;
@@ -139,6 +164,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     HttpServer::new(move || {
         let pgml_repository = pgml_repository.clone();
         let (app, api) = App::new()
+            .app_data(web::Data::new(llm_recipients.clone()))
+            .app_data(web::Data::new(audio_recipients.clone()))
+            .app_data(pgml_repository.clone())
             .app_data(database_data.clone())
             .app_data(manager_data.clone())
             .app_data(downloader_data.clone())
@@ -149,6 +177,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .service(chat::chat_completions)
                     .service(audio::audio_transcriptions)
                     .service(audio::audio_speech),
+            )
+            .service(
+                scope::scope("/admin/api")
+                    .service(admin::list_models)
+                    .service(admin::register_model)
+                    .service(admin::delete_model),
             )
             .service(web::resource("/admin").route(web::get().to(admin::dashboard)))
             .service(health)

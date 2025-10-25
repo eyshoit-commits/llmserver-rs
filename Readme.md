@@ -53,6 +53,12 @@ export PGML_POSTGRES_PASSWORD='pGml-Admin#2025!Secure'
 # 2. Launch the lightweight PostgresML instance (listens on 6543)
 docker compose -f docker-compose.pgml.yml up -d
 
+# 3. Point llmserver-rs to the database (disable TLS for the local compose service)
+export DATABASE_URL="postgresql://pgml_admin:${PGML_POSTGRES_PASSWORD}@localhost:6543/pgml"
+export PGML_TLS_MODE=disable
+```
+
+Refer to [docs/pgml-admin.md](docs/pgml-admin.md) for Supabase instructions, including the TLS-required `PGML_TLS_MODE=require` configuration, and advanced operations.
 # 3. Point llmserver-rs to the database
 export DATABASE_URL="postgresql://pgml_admin:${PGML_POSTGRES_PASSWORD}@localhost:6543/pgml"
 ```

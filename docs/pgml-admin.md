@@ -65,6 +65,10 @@ If Docker-based PostgresML is not an option:
    ```
 
 3. Retrieve the connection string from the project settings and map it to `DATABASE_URL`.
+4. Set `PGML_TLS_MODE=require` because Supabase only exposes TLS-enabled Postgres endpoints.
+5. Ensure the service role key is stored securely (for example via the hosting platform's secret manager).
+
+The Admin Dashboard honours the TLS mode automatically. When `PGML_TLS_MODE=require` is present all queries, migrations, and PGML calls are executed over a `rustls`-backed encrypted channel so Supabase compatibility is ensured without reverse proxies or stunnel sidecars.
 4. Ensure the service role key is stored securely (for example via the hosting platform's secret manager).
 
 Supabase exposes a managed Postgres instance that is compatible with the dashboard workflows. You can still run `docker-compose.pgml.yml` locally for development and switch to Supabase in production.
