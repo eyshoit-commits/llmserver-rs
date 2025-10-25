@@ -1,172 +1,139 @@
-use actix::{Actor, Recipient};
-use clap::{Arg, ArgAction, Command};
-use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::{BufReader, Read},
-    net::Ipv4Addr,
-};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use actix_web::{head, middleware::Logger, App, HttpServer, Result};
+use actix_files::Files;
+use actix_session::{config::PersistentSession, storage::CookieSessionStore, SessionMiddleware};
+use actix_web::cookie::Key;
+use actix_web::{get, middleware::Logger, web, App, HttpResponse, HttpServer, Result};
 use llmserver_rs::{
-    asr::simple::SimpleASRConfig, utils::ModelConfig, AIModel, ProcessAudio, ProcessMessages,
-    ShutdownMessages,
+    api_keys, audio, auth, chat, database,
+    encryption::EncryptionService,
+    huggingface, models,
+    state::{AppState, ModelManager},
+    tts,
 };
-use utoipa_actix_web::{scope, AppExt};
-use utoipa_swagger_ui::SwaggerUi;
 
-fn load_model_configs() -> Result<HashMap<String, ModelConfig>, Box<dyn std::error::Error>> {
-    let dir_path = "assets/config";
-    let entries = fs::read_dir(dir_path).map_err(|e| e.to_string())?;
-
-    let mut configs: HashMap<String, ModelConfig> = HashMap::new();
-
-    for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let mut file = fs::File::open(&path).map_err(|e| e.to_string())?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .map_err(|e| e.to_string())?;
-
-            let mut config: ModelConfig =
-                serde_json::from_str(&contents).map_err(|e| e.to_string())?;
-            println!("Loaded model config: {:?}", path.display());
-            config._asserts_path = path.to_string_lossy().to_string();
-            configs.insert(config.model_repo.clone(), config);
-        }
-    }
-
-    Ok(configs)
-}
-
-/// Get health of the API.
-#[utoipa::path(
-    responses(
-        (status = OK, description = "Success", body = str, content_type = "text/plain")
-    )
-)]
-#[head("/health")]
+#[get("/health")]
 async fn health() -> &'static str {
     ""
 }
 
+fn decode_hex_key(value: &str, expected_len: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let bytes = hex::decode(value)?;
+    if bytes.len() != expected_len {
+        return Err(format!("expected {expected_len} bytes but decoded {}", bytes.len()).into());
+    }
+    Ok(bytes)
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-    std::env::set_var("RUST_LOG", "info");
+    std::env::set_var(
+        "RUST_LOG",
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+    );
     env_logger::init();
 
-    let matches = Command::new("rkllm")
-        .about("Stupid webserver ever!")
-        .version(VERSION)
-        .arg_required_else_help(true)
-        .arg(Arg::new("model_name"))
-        .arg(
-            Arg::new("instances")
-                .short('i')
-                .help("How many llm instances do you want to create.")
-                .action(ArgAction::Set)
-                .num_args(1),
-        )
-        .get_matches();
-
-    //初始化模型
-    let mut num_instances = 1; // 根據資源設定
-
-    if let Some(value) = matches.get_one::<usize>("instances") {
-        num_instances = *value;
-    }
-    let model_name = matches.get_one::<String>("model_name").unwrap();
-
-    // Text type LLM
-    let mut llm_recipients = HashMap::<String, Vec<Recipient<ProcessMessages>>>::new();
-    let mut audio_recipients = HashMap::<String, Vec<Recipient<ProcessAudio>>>::new();
-    let mut shutdown_recipients = Vec::new();
-
-    let model_config_table = load_model_configs()?;
-
-    for _ in 0..num_instances {
-        if let Some(config) = model_config_table.get(model_name) {
-            if config.model_type == llmserver_rs::utils::ModelType::LLM {
-                let llm = llmserver_rs::llm::simple::SimpleRkLLM::init(&config);
-                let model_name = config.model_name.clone();
-
-                let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
-                if let Some(vec) = llm_recipients.get_mut(&model_name) {
-                    vec.push(addr.clone().recipient::<ProcessMessages>());
-                } else {
-                    llm_recipients.insert(
-                        model_name,
-                        vec![addr.clone().recipient::<ProcessMessages>()],
-                    );
-                }
-                shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
-            } else if config.model_type == llmserver_rs::utils::ModelType::ASR {
-                let (llm, modelname) = match (*model_name).as_str() {
-                    "happyme531/SenseVoiceSmall-RKNN2" => {
-                        let config_path = "assets/config/sensevoicesmall.json";
-                        let file = File::open(config_path)
-                            .expect(&format!("Config {} not found!", config_path));
-                        let mut de = serde_json::Deserializer::from_reader(BufReader::new(file));
-                        let config = SimpleASRConfig::deserialize(&mut de)?;
-                        (
-                            llmserver_rs::asr::simple::SimpleASR::init(&config),
-                            config.model_name.clone(),
-                        )
-                    }
-                    _ => {
-                        continue;
-                    }
-                };
-                let addr = llm.unwrap().start(); // 啟動 Actor，一次即可
-                if let Some(vec) = audio_recipients.get_mut(&modelname) {
-                    vec.push(addr.clone().recipient::<ProcessAudio>());
-                } else {
-                    audio_recipients
-                        .insert(modelname, vec![addr.clone().recipient::<ProcessAudio>()]);
-                }
-                shutdown_recipients.push(addr.clone().recipient::<ShutdownMessages>());
-            }
-        } else {
-            panic!("Model {} not found in the configuration!", model_name);
+    let database_url = std::env::var("LLMSERVER_DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite://data/app.db".to_string());
+    if let Some(path) = database_url.strip_prefix("sqlite://") {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
         }
     }
-    
-    if audio_recipients.len() == 0 && llm_recipients.len() == 0 {
-        panic!("You do not load any model");
+
+    let pool = database::init_pool(&database_url).await?;
+    database::run_migrations(&pool).await?;
+    auth::ensure_initial_admin(&pool)
+        .await
+        .map_err(|e| Box::new(e) as _)?;
+
+    let encryption_hex = std::env::var("LLMSERVER_ENCRYPTION_KEY")
+        .expect("LLMSERVER_ENCRYPTION_KEY must be set to a 64-character hex string");
+    let encryption = EncryptionService::new_from_hex(&encryption_hex)
+        .map_err(|e| format!("invalid encryption key: {e}"))?;
+
+    let session_hex = std::env::var("LLMSERVER_SESSION_KEY")
+        .expect("LLMSERVER_SESSION_KEY must be set to a 128-character hex string (64 bytes)");
+    let session_key_bytes = decode_hex_key(&session_hex, 64)?;
+    let session_key = Key::from(&session_key_bytes);
+
+    let cache_dir = std::env::var("LLMSERVER_HF_CACHE").unwrap_or_else(|_| "hf-cache".to_string());
+    std::fs::create_dir_all(&cache_dir)?;
+    let huggingface_cache = PathBuf::from(cache_dir);
+
+    let http_client = reqwest::Client::builder()
+        .user_agent(format!("llmserver-rs/{}", env!("CARGO_PKG_VERSION")))
+        .build()?;
+
+    let app_state = AppState {
+        pool: pool.clone(),
+        model_manager: ModelManager::new(),
+        encryption: Arc::new(encryption),
+        http_client,
+        huggingface_cache: huggingface_cache.clone(),
+    };
+
+    if let Err(err) = models::resume_running_models(&app_state).await {
+        log::error!("failed to resume models: {err}");
     }
 
+    let bind_address =
+        std::env::var("LLMSERVER_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8443".to_string());
+
     HttpServer::new(move || {
-        let (app, api) = App::new()
-            .app_data(actix_web::web::Data::new(llm_recipients.clone()))
-            .app_data(actix_web::web::Data::new(audio_recipients.clone()))
-            .into_utoipa_app()
-            .map(|app| app.wrap(Logger::default()))
+        let session_middleware =
+            SessionMiddleware::builder(CookieSessionStore::default(), session_key.clone())
+                .session_lifecycle(
+                    PersistentSession::default()
+                        .session_ttl(actix_web::cookie::time::Duration::hours(12)),
+                )
+                .cookie_secure(false)
+                .build();
+
+        App::new()
+            .wrap(Logger::default())
+            .wrap(session_middleware)
+            .app_data(web::Data::new(app_state.clone()))
             .service(
-                scope::scope("/v1")
-                    .service(llmserver_rs::chat::chat_completions)
-                    .service(llmserver_rs::audio::audio_transcriptions),
+                web::scope("/v1")
+                    .service(chat::chat_completions)
+                    .service(audio::audio_transcriptions)
+                    .service(tts::text_to_speech),
+            )
+            .service(
+                web::scope("/admin/api")
+                    .route("/login", web::post().to(auth::login))
+                    .route("/logout", web::post().to(auth::logout))
+                    .route("/session", web::get().to(auth::current_admin))
+                    .route("/users", web::post().to(auth::create_admin))
+                    .route("/api-keys", web::get().to(api_keys::list_api_keys))
+                    .route("/api-keys", web::post().to(api_keys::create_api_key))
+                    .route("/api-keys/{id}", web::patch().to(api_keys::update_api_key))
+                    .route("/api-keys/{id}", web::delete().to(api_keys::delete_api_key))
+                    .route("/hf-tokens", web::get().to(huggingface::list_tokens))
+                    .route("/hf-tokens", web::put().to(huggingface::upsert_token))
+                    .route(
+                        "/hf-tokens/{name}",
+                        web::delete().to(huggingface::delete_token),
+                    )
+                    .route("/models", web::get().to(models::list_models))
+                    .route("/models", web::post().to(models::create_model))
+                    .route("/models/{id}", web::get().to(models::get_model))
+                    .route("/models/{id}", web::delete().to(models::delete_model))
+                    .route(
+                        "/models/{id}/download",
+                        web::post().to(models::download_model),
+                    )
+                    .route("/models/{id}/start", web::post().to(models::start_model))
+                    .route("/models/{id}/stop", web::post().to(models::stop_model)),
             )
             .service(health)
-            .split_for_parts();
-
-        app.service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", api))
+            .service(Files::new("/admin", "./assets/admin").index_file("index.html"))
     })
-    .bind((Ipv4Addr::UNSPECIFIED, 8080))?
+    .bind(bind_address)?
     .run()
     .await?;
 
-    let shutdowns = shutdown_recipients.into_iter().map(|addr| async move {
-        let _ = addr.send(ShutdownMessages).await.unwrap();
-    });
-
-    tokio::spawn(async {
-        futures::future::join_all(shutdowns).await;
-    })
-    .await?;
     Ok(())
 }

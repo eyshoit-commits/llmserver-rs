@@ -1,15 +1,18 @@
-use actix::Recipient;
 use actix_web::{
     post,
     web::{self, Json},
-    HttpResponse, Responder,
+    HttpRequest, HttpResponse, Responder,
 };
 use futures::StreamExt;
-use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::SystemTime};
+use std::time::SystemTime;
 
-use crate::{Content, Message, OpenAiError, ProcessMessages, Role};
+use crate::state::AppState;
+use crate::{
+    api_keys::{extract_api_key, record_token_usage, validate_api_key},
+    tokenizer::{count_messages_tokens, count_text_tokens},
+    Content, Message, OpenAiError, ProcessMessages, Role,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct Delta {
@@ -137,8 +140,9 @@ pub struct ChatCompletionsResponse {
 )]
 #[post("/chat/completions")]
 pub async fn chat_completions(
+    req: HttpRequest,
     body: Json<ChatCompletionsRequest>,
-    llm_pool: web::Data<HashMap<String, Vec<Recipient<ProcessMessages>>>>,
+    state: web::Data<AppState>,
 ) -> impl Responder {
     let id = "123".to_owned(); // Todo: 要改從資料庫拿
     let created = SystemTime::now();
@@ -147,7 +151,40 @@ pub async fn chat_completions(
         .expect("Time went backwards")
         .as_secs();
 
-    let Some(llm_pool) = llm_pool.get(&body.model) else {
+    let Some(api_key) = extract_api_key(&req) else {
+        return HttpResponse::Unauthorized().finish();
+    };
+
+    let api_key_info = match validate_api_key(&state.pool, &api_key).await {
+        Ok(Some(info)) => info,
+        Ok(None) => return HttpResponse::Unauthorized().finish(),
+        Err(err) => return err,
+    };
+
+    if body.stream.unwrap_or(false) {
+        return HttpResponse::NotImplemented().json(OpenAiError {
+            message: "Streaming responses are not supported when API key enforcement is enabled."
+                .to_string(),
+            code: "stream_not_supported".to_owned(),
+            r#type: "invalid_request_error".to_owned(),
+            param: None,
+        });
+    }
+
+    let prompt_tokens = count_messages_tokens(&body.messages);
+    if let Some(limit) = api_key_info.token_limit {
+        let current_total = api_key_info.prompt_tokens_used + api_key_info.completion_tokens_used;
+        if current_total + prompt_tokens >= limit {
+            return HttpResponse::TooManyRequests().json(OpenAiError {
+                message: "token quota exceeded".to_owned(),
+                code: "quota_exceeded".to_owned(),
+                r#type: "rate_limit_exceeded".to_owned(),
+                param: None,
+            });
+        }
+    }
+
+    let Some(llm) = state.model_manager.choose_llm(&body.model).await else {
         return HttpResponse::BadRequest().json(OpenAiError {
             message: format!(
                 "The model {} does not exist or you do not have access to it.",
@@ -159,88 +196,52 @@ pub async fn chat_completions(
         });
     };
 
-    let mut rng = rand::rng();
-    let llm = llm_pool.choose(&mut rng).unwrap();
-
     let send_future = llm.send(ProcessMessages {
         messages: body.messages.clone(),
     });
 
     match actix_web::rt::time::timeout(std::time::Duration::from_secs(5), send_future).await {
         Ok(Ok(Ok(receiver))) => {
-            if body.stream.unwrap_or(false) {
-                let object = "chat.completion.chunk".to_owned();
-                let mut stream_counter = 0;
-                let sse_stream = receiver.map(move |content| {
-                    let choices = vec![Choice {
-                        index: 0,
-                        finish_reason: if &content == "" {
-                            Some(FinishReason::Stop)
-                        } else {
-                            None
-                        },
-                        message: Some(Message {
-                            role: if stream_counter == 0 {
-                                Some(Role::Assistant)
-                            } else {
-                                None
-                            },
-                            content: if &content == "" {
-                                None
-                            } else {
-                                Some(Content::String(content))
-                            },
-                        }),
-                        delta: None,
-                    }];
-                    let chunk = ChatCompletionsResponse {
-                        id: id.clone(),
-                        object: object.clone(),
-                        created,
-                        choices,
-                        usage: None,
-                    };
+            let chunks = receiver.collect::<Vec<_>>().await;
+            let content = chunks.join("");
+            let completion_tokens = count_text_tokens(&content);
 
-                    stream_counter += 1;
-                    // 將 JSON 序列化為字串並添加換行符
-                    let sse_data = serde_json::to_string(&chunk).unwrap() + "\n";
-                    Ok::<web::Bytes, actix_web::Error>(web::Bytes::from(sse_data))
-                    // 轉為 Bytes 並包裝在 Result 中
-                });
-                actix_web::HttpResponse::Ok()
-                    .content_type("text/event-stream")
-                    .streaming(sse_stream)
-            } else {
-                let a = receiver.collect::<Vec<_>>().await;
-                let content = a.join("");
+            let usage = Usage {
+                completion_tokens: completion_tokens as i32,
+                prompt_tokens: prompt_tokens as i32,
+                total_tokens: (completion_tokens + prompt_tokens) as i32,
+            };
 
-                // TODO: 執行完解包
-                let object = "chat.completion".to_owned();
-                let usage = Usage {
-                    // TODO: 要給實際數字
-                    completion_tokens: 9,
-                    prompt_tokens: 9,
-                    total_tokens: 9,
-                };
-                // TODO
-                let choices = vec![Choice {
-                    index: 0,
-                    message: Some(Message {
-                        role: Some(Role::Assistant),
-                        content: Some(Content::String(content)),
-                    }),
-                    delta: None,
-                    finish_reason: Some(FinishReason::Stop),
-                }];
-
-                HttpResponse::Ok().json(ChatCompletionsResponse {
-                    id,
-                    object,
-                    created,
-                    choices,
-                    usage: Some(usage),
-                })
+            if let Err(err) = record_token_usage(
+                &state.pool,
+                &api_key_info.id,
+                &body.model,
+                prompt_tokens,
+                completion_tokens,
+            )
+            .await
+            {
+                return err;
             }
+
+            let object = "chat.completion".to_owned();
+            let choices = vec![Choice {
+                index: 0,
+                message: Some(Message {
+                    role: Some(Role::Assistant),
+                    content: Some(Content::String(content)),
+                }),
+                delta: None,
+                finish_reason: Some(FinishReason::Stop),
+            }];
+
+            HttpResponse::Ok().json(ChatCompletionsResponse {
+                id,
+                object,
+                created,
+                choices,
+                usage: Some(usage),
+            })
         }
         Ok(Ok(Err(e))) => HttpResponse::InternalServerError().json(OpenAiError {
             message: format!("Internal processing error: {:?}", e),
